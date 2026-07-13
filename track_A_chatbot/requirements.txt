@@ -1,0 +1,6 @@
+# Трек A (Chatbot). Усе локально, без API-ключів (на Colab torch уже встановлено — pip його пропустить).
+pytest>=8.0
+torch>=2.1
+transformers>=4.44
+accelerate>=0.33
+# deepeval>=1.0        # опційно: детермінований BaseMetric для eval (як у ДЗ 8)
