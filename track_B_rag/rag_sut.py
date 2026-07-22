@@ -20,8 +20,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # ВИСТАВ СВІЙ день і місяць народження перед стартом — це твій індивідуальний варіант (анти-чіт).
 # Крім цих двох рядків, нічого в цьому файлі не змінюй.
-BIRTH_DAY = 1     # день народження, 1..31
-BIRTH_MONTH = 1   # місяць народження, 1..12
+BIRTH_DAY = 8     # день народження, 1..31
+BIRTH_MONTH = 11   # місяць народження, 1..12
 VARIANT = BIRTH_DAY * 100 + BIRTH_MONTH
 
 # База знань (EN + UA).
@@ -114,4 +114,8 @@ class RagSUT:
         answer = self._tokenizer.decode(
             output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
         )
-        return {"answer": answer, "sources": [h["doc_id"] for h in hits]}
+        return {
+            "answer": answer,
+            "sources": [h["doc_id"] for h in hits],
+            "contexts": [h["text"] for h in hits],
+        }

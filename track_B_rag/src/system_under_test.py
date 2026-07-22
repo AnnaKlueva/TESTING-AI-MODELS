@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import os
 
-# Обери трек: 'A' = chatbot, 'B' = rag, 'C' = ml, 'D' = agent
 TRACK = os.getenv("TRACK", "B")
 
 
@@ -39,7 +38,7 @@ class StudentSUT:
             raise ValueError("Unknown TRACK: " + str(TRACK))
 
     def generate(self, case: dict) -> dict:
-        """Повертає dict із полем 'output' (+ 'sources' для RAG)."""
+        """Повертає dict із полем 'output' (+ 'sources'/'contexts' для RAG)."""
         if TRACK == "A":
             # Базовий single-turn. TODO: для multi-turn кейсів подавай послідовність кроків
             # і викликай self._bot.reset() між незалежними кейсами.
@@ -48,7 +47,11 @@ class StudentSUT:
 
         if TRACK == "B":
             result = self._rag.ask(case["input"])
-            return {"output": result["answer"], "sources": result["sources"]}
+            return {
+                "output": result["answer"],
+                "sources": result["sources"],
+                "contexts": result["contexts"],
+            }
 
         if TRACK == "C":
             # Для ML зазвичай зручніше зберігати предикти по рядках production_data.csv.
