@@ -3,7 +3,9 @@
 
 1) Retrieval-метрики — офлайн з gold_doc_ids (без моделі).
 2) Ragas LLM-as-judge — локальний Qwen3-8B (4-bit на GPU) над
-   input / contexts / output / expected з outputs/generations.json.
+   input / contexts / output / expected з outputs/generations.json
+   (faithfulness, answer_relevancy, answer_correctness,
+   context_precision, context_recall).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ EMBED_MODEL_ID = "intfloat/multilingual-e5-base"
 PASS_RATE_THRESHOLD = 0.8
 FAITHFULNESS_THRESHOLD = 0.8
 ANSWER_RELEVANCY_THRESHOLD = 0.8
+ANSWER_CORRECTNESS_THRESHOLD = 0.8
 CONTEXT_PRECISION_THRESHOLD = 0.8
 CONTEXT_RECALL_THRESHOLD = 0.8
 
@@ -334,10 +337,11 @@ def _wrap_embeddings_for_ragas():
 
 
 def _build_ragas_metrics(ragas_llm, ragas_embeddings):
-    """Faithfulness, Answer Relevancy, Context Precision, Context Recall."""
+    """Faithfulness, Answer Relevancy/Correctness, Context Precision/Recall."""
     try:
         # ragas ≥0.2 class API
         from ragas.metrics import (
+            AnswerCorrectness,
             AnswerRelevancy,
             ContextPrecision,
             ContextRecall,
@@ -347,6 +351,7 @@ def _build_ragas_metrics(ragas_llm, ragas_embeddings):
         return [
             Faithfulness(llm=ragas_llm),
             AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embeddings),
+            AnswerCorrectness(llm=ragas_llm, embeddings=ragas_embeddings),
             ContextPrecision(llm=ragas_llm),
             ContextRecall(llm=ragas_llm),
         ]
@@ -356,6 +361,7 @@ def _build_ragas_metrics(ragas_llm, ragas_embeddings):
     try:
         # ragas 0.1.x module-level metrics
         from ragas.metrics import (
+            answer_correctness,
             answer_relevancy,
             context_precision,
             context_recall,
@@ -365,11 +371,14 @@ def _build_ragas_metrics(ragas_llm, ragas_embeddings):
         faithfulness.llm = ragas_llm
         answer_relevancy.llm = ragas_llm
         answer_relevancy.embeddings = ragas_embeddings
+        answer_correctness.llm = ragas_llm
+        answer_correctness.embeddings = ragas_embeddings
         context_precision.llm = ragas_llm
         context_recall.llm = ragas_llm
         return [
             faithfulness,
             answer_relevancy,
+            answer_correctness,
             context_precision,
             context_recall,
         ]
@@ -427,7 +436,7 @@ def _mean_ragas_metric(rows: list[dict], key: str) -> float | None:
 
 def test_ragas_qwen3_judge():
     """
-    Ragas LLM-as-judge: Faithfulness, Answer Relevancy,
+    Ragas LLM-as-judge: Faithfulness, Answer Relevancy, Answer Correctness,
     Context Precision, Context Recall з локальним Qwen3-8B.
     Зберігає per-example метрики у outputs/rag_evaluation_results.json.
     Assert: mean кожної метрики ≥ 0.8.
@@ -471,6 +480,7 @@ def test_ragas_qwen3_judge():
     checks = [
         ("faithfulness", FAITHFULNESS_THRESHOLD),
         ("answer_relevancy", ANSWER_RELEVANCY_THRESHOLD),
+        ("answer_correctness", ANSWER_CORRECTNESS_THRESHOLD),
         ("context_precision", CONTEXT_PRECISION_THRESHOLD),
         ("context_recall", CONTEXT_RECALL_THRESHOLD),
     ]
