@@ -446,6 +446,7 @@ def test_ragas_qwen3_judge():
     """
     try:
         from ragas import evaluate
+        from ragas.run_config import RunConfig
     except Exception as ex:
         pytest.skip(f"ragas недоступний: {ex!r}")
 
@@ -457,6 +458,10 @@ def test_ragas_qwen3_judge():
     ragas_embeddings = _wrap_embeddings_for_ragas()
     metrics = _build_ragas_metrics(ragas_llm, ragas_embeddings)
 
+    # Локальний Qwen3-8B: дефолт timeout=180s + max_workers=16 → TimeoutError.
+    # Один воркер + довший timeout під послідовну HF-інференцію.
+    run_config = RunConfig(timeout=600, max_workers=1, max_retries=3)
+
     try:
         result = evaluate(
             dataset=dataset,
@@ -464,6 +469,7 @@ def test_ragas_qwen3_judge():
             llm=ragas_llm,
             embeddings=ragas_embeddings,
             raise_exceptions=False,
+            run_config=run_config,
         )
     except TypeError:
         # старіші сигнатури evaluate()
