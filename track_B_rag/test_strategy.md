@@ -7,7 +7,7 @@
 
 - Обраний трек: _ B (rag)_
 - Демо-система: Acme Cloud RAG Assistant
-- **Зафіксована модель/версія:** Qwen/Qwen2.5-0.5B-Instruct
+- **Зафіксована модель/версія:** Qwen/Qwen2.5-1.5B-Instruct
 - Параметри генерації: top_k=2, temperature не застосовна / greedy (do_sample=False).
 
 ## 2. Цілі та межі тестування
@@ -16,6 +16,8 @@
 - Що поза скоупом:   
 - no verification for situation when doc gets re-chunked after an update  
 - no comparison with previous test runs
+
+
 
 ## 3. Матриця ризиків (3–5 критичних точок)
 
@@ -36,7 +38,7 @@
 
 - Типи перевірок: *функціональні / метричні / adversarial / регресійні*
 - **Техніки дизайну тестів** (як добирав кейси): *еквівалентні класи / межові значення / негативні / adversarial / комбінаторика*
-- Метрики та **чому саме вони** (прив'яжи кожну до ризику):    
+- Метрики та **чому саме вони** (прив'яжи кожну до ризику):  
 //TODO: *...*
 - Інструменти: *pytest / DeepEval / Ragas /LangChain / LangSmith*
 
@@ -70,18 +72,19 @@
 
 - Кейс вважається пройденим, якщо: *...*  
 *//TODO: fulfill ...*
-- Поріг для метрик:   
+- Поріг для метрик:  
 **Precision@K** ≥ **0.8**  
 **Recall@K** ≥ **0.8**  
 **MRR** ≥ **0.8**  
-**NDGS** ≥ **0.8 **  
-**//TODO: UPDATE**  
+**NDGS** ≥ 0.8  
 **Context/generation metrics:**  
-MIN_FAITHFULNESS          = 0.8        # >= 80% of answer claims must be grounded  
-CRITICAL_FAITHFULNESS     = 0.3        # below this = outright fabrication, always fail  
-ANSWER_RELEVANCE = ???  
-ANSWER_CORRECTNESS =???  
-CONTEXT_CORRECTNESS = ???
+FAITHFULNESS  ≥  0.8    
+ANSWER_RELEVANCE ≥ 0.8  
+CONTEXT_CORRECTNESS ≥ 0.8  
+CONTEXT_PRECISIO ≥ 0.8
+
+     ANSWER_CORRECTNESS ≥ 0.8
+
 - **Entry criteria** : *SUT доступний, датасет ≥30, ризики визначені, SLA for metrics are set, tools for testing is selected*
 - **Exit criteria / DoD** : *run_eval зелений офлайн; усі P1-ризики покриті кейсами; дефекти задокументовані з severity й root cause; звіт і traceability заповнені*
 
@@ -90,7 +93,7 @@ CONTEXT_CORRECTNESS = ???
 ## 7. Дані
 
 - Джерело eval-датасету: *data/eval_dataset.json*
-- Розподіл за категоріями (happy / edge / negative / adversarial):   
+- Розподіл за категоріями (happy / edge / negative / adversarial):  
 //TODO: fill with correct quantity  
 *-* happy : test cases   
 - edge : test cases  

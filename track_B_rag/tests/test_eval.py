@@ -23,16 +23,16 @@ sys.path.insert(0, str(ROOT / "src"))
 
 GENERATIONS = ROOT / "outputs" / "generations.json"
 RAGAS_RESULTS_JSON = ROOT / "outputs" / "rag_evaluation_results.json"
-RAGAS_RESULTS_CSV = ROOT / "outputs" / "rag_evaluation_results.csv"
 
 JUDGE_MODEL_ID = "Qwen/Qwen3-8B"
 EMBED_MODEL_ID = "intfloat/multilingual-e5-base"
 
 # Пороги — обґрунтуй у test_strategy.md (розділ 5 / 6).
 PASS_RATE_THRESHOLD = 0.8
-FAITHFULNESS_THRESHOLD = 0.5
-ANSWER_RELEVANCY_THRESHOLD = 0.4
-RAGAS_CONTEXT_FLOOR = 0.5
+FAITHFULNESS_THRESHOLD = 0.8
+ANSWER_RELEVANCY_THRESHOLD = 0.8
+CONTEXT_PRECISION_THRESHOLD = 0.8
+CONTEXT_RECALL_THRESHOLD = 0.8
 
 # os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "YES")
 os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
@@ -213,6 +213,7 @@ def _load_qwen3_judge():
     Локальний Qwen3-8B для Ragas.
     4-bit через BitsAndBytesConfig (Colab GPU); без bnb — MPS/CPU fp16/bf16.
     Потрібен transformers>=4.51 (підтримка model_type=qwen3).
+    max_new_tokens=1024, enable_thinking=False (інакше Ragas часто дістає null).
     """
     try:
         import torch
@@ -253,17 +254,56 @@ def _load_qwen3_judge():
     except Exception as ex:
         pytest.skip(f"не вдалося завантажити {JUDGE_MODEL_ID}: {type(ex).__name__}: {ex}")
 
+    # Qwen3: thinking увімкнений за замовчуванням у chat template —
+    # вимикаємо, щоб Ragas отримував короткий JSON/verdict, а не <think>…
+    _orig_apply = tokenizer.apply_chat_template
+
+    def _apply_chat_template_no_think(*args, **kwargs):
+        kwargs["enable_thinking"] = False
+        return _orig_apply(*args, **kwargs)
+
+    tokenizer.apply_chat_template = _apply_chat_template_no_think
+
     # temperature=0 / do_sample=False — детермінований суддя
     gen_pipeline = pipeline(
         "text-generation",
         model=model,
         tokenizer=tokenizer,
-        max_new_tokens=200,
+        max_new_tokens=1024,
         do_sample=False,
         temperature=0,
         return_full_text=False,
     )
-    return gen_pipeline
+    return _Qwen3NoThinkPipeline(gen_pipeline)
+
+
+class _Qwen3NoThinkPipeline:
+    """
+    Ragas/LangChain подають звичайний str-промпт.
+    Обгортаємо його в chat template з enable_thinking=False.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.tokenizer = inner.tokenizer
+        self.model = inner.model
+
+    def __call__(self, text_inputs, **kwargs):
+        single = isinstance(text_inputs, str)
+        prompts = [text_inputs] if single else list(text_inputs)
+        formatted = [
+            self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": p}],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+            for p in prompts
+        ]
+        return self._inner(formatted[0] if single else formatted, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
 
 
 def _wrap_judge_for_ragas(gen_pipeline):
@@ -337,8 +377,8 @@ def _build_ragas_metrics(ragas_llm, ragas_embeddings):
         pytest.skip(f"не вдалося зібрати Ragas-метрики: {ex!r}")
 
 
-def _export_ragas_results(result, records: list[dict]) -> None:
-    """Результати → pandas DataFrame → JSON + CSV."""
+def _export_ragas_results(result, records: list[dict]):
+    """Результати → pandas DataFrame → JSON. Повертає DataFrame."""
     try:
         import pandas as pd
     except Exception as ex:
@@ -361,20 +401,39 @@ def _export_ragas_results(result, records: list[dict]) -> None:
 
     RAGAS_RESULTS_JSON.parent.mkdir(parents=True, exist_ok=True)
     df.to_json(RAGAS_RESULTS_JSON, orient="records", force_ascii=False, indent=2)
-    df.to_csv(RAGAS_RESULTS_CSV, index=False)
     print(f"\nRagas results → {RAGAS_RESULTS_JSON}")
-    print(f"Ragas results → {RAGAS_RESULTS_CSV}")
     print(df.to_string(index=False))
+    return df
+
+
+def _mean_ragas_metric(rows: list[dict], key: str) -> float | None:
+    """Середнє по ключу; ігнорує None/NaN. None якщо немає валідних значень."""
+    vals: list[float] = []
+    for row in rows:
+        v = row.get(key)
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if fv != fv:  # NaN
+            continue
+        vals.append(fv)
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
 
 
 def test_ragas_qwen3_judge():
     """
     Ragas LLM-as-judge: Faithfulness, Answer Relevancy,
     Context Precision, Context Recall з локальним Qwen3-8B.
-    Зберігає per-example метрики у outputs/rag_evaluation_results.{json,csv}.
+    Зберігає per-example метрики у outputs/rag_evaluation_results.json.
+    Assert: mean кожної метрики ≥ 0.8.
 
     Важкий тест (≈8B, GPU/Colab). Без моделі/VRAM — pytest.skip.
-    Запуск окремо: pytest tests/test_eval.py::test_ragas_qwen3_judge -v
+    Запуск окремо: pytest tests/test_eval.py::test_ragas_qwen3_judge -v -s
     """
     try:
         from ragas import evaluate
@@ -405,7 +464,28 @@ def test_ragas_qwen3_judge():
 
     _export_ragas_results(result, records)
 
-    # Мінімальна перевірка: файл з результатами існує
     assert RAGAS_RESULTS_JSON.exists(), f"немає {RAGAS_RESULTS_JSON}"
     saved = json.loads(RAGAS_RESULTS_JSON.read_text(encoding="utf-8"))
     assert saved, "порожній rag_evaluation_results.json"
+
+    checks = [
+        ("faithfulness", FAITHFULNESS_THRESHOLD),
+        ("answer_relevancy", ANSWER_RELEVANCY_THRESHOLD),
+        ("context_precision", CONTEXT_PRECISION_THRESHOLD),
+        ("context_recall", CONTEXT_RECALL_THRESHOLD),
+    ]
+
+    print("\n=== Ragas mean metrics (LLM judge) ===")
+    failures: list[str] = []
+    for key, threshold in checks:
+        mean_val = _mean_ragas_metric(saved, key)
+        if mean_val is None:
+            print(f"{key}: n/a (усі значення null/NaN), threshold={threshold}")
+            failures.append(f"{key}=n/a (немає валідних значень), threshold={threshold}")
+            continue
+        status = "PASS" if mean_val >= threshold else "FAIL"
+        print(f"{key}: {mean_val:.4f} (threshold={threshold}) [{status}]")
+        if mean_val < threshold:
+            failures.append(f"{key}={mean_val:.4f} < {threshold}")
+
+    assert not failures, "Ragas metrics below threshold:\n  - " + "\n  - ".join(failures)
