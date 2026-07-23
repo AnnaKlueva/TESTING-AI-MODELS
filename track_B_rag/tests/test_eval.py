@@ -258,7 +258,7 @@ def _load_qwen3_judge():
         "text-generation",
         model=model,
         tokenizer=tokenizer,
-        max_new_tokens=512,
+        max_new_tokens=200,
         do_sample=False,
         temperature=0,
         return_full_text=False,
