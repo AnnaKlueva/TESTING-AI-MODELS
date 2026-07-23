@@ -1,16 +1,22 @@
 # Трек B (RAG). Локальні e5 + Chroma + Qwen, без API-ключів (на Colab torch уже встановлено — pip його пропустить).
 pytest>=8.0
 torch>=2.1
-transformers>=4.44
+transformers>=4.51  # Qwen3 architecture (model_type=qwen3)
 accelerate>=0.33
 sentence-transformers>=3.0
-langchain-chroma>=0.1.4
-langchain-huggingface>=0.0.3
-langchain-text-splitters>=0.2
+datasets>=2.19
+# LangChain 0.3.x + ragas 0.2.x — сумісний стек (ragas 0.4 + LC 1.x ламає vertexai import)
+langchain>=0.3,<0.4
+langchain-core>=0.3,<0.4
+langchain-chroma>=0.1.4,<0.2
+langchain-huggingface>=0.1,<0.2
+langchain-text-splitters>=0.3,<0.4
+langchain-community>=0.3,<0.4
 bitsandbytes>=0.43   # опційно: вмикає 4-bit генерацію на GPU (Colab); без нього — звичайне завантаження
-deepeval>=1.0        # BaseMetric без ключа
-ragas>=0.1.21        # крихкий на Colab: імпортуй у try/except усередині тесту
+#deepeval>=1.0        # BaseMetric без ключа
+ragas>=0.2.10,<0.3
 rapidfuzz            # потрібно non-LLM метрикам Ragas; без нього тест skip-ається
+pandas>=2.0
 
 opentelemetry-api>=1.39,<1.43
 opentelemetry-sdk>=1.39,<1.43
