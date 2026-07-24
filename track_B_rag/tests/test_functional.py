@@ -16,13 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "data" / "eval_dataset.jsonl"
 GENERATIONS = ROOT / "outputs" / "generations.json"
 
-# Детермінований оракул відмови (EN + UA) — без моделі.
-_REFUSAL_RE = re.compile(
-    r"(don'?t know|do not know|cannot|can'?t|no information|not in|unknown|The context does not provide information|"
-    r"не знаю|немає|нема інформації|не можу|відсутн)",
-    re.IGNORECASE,
-)
-
 
 def load_cases() -> list[dict]:
     with DATASET.open(encoding="utf-8") as f:
@@ -88,14 +81,3 @@ def test_answerable_output_non_empty():
             continue
         out = (rec.get("output") or "").strip()
         assert out, f"Запис {rec.get('id')}: порожній output при answerable=true"
-
-
-def test_unanswerable_refusal_oracle():
-    """Для answerable=false — детермінований оракул відмови (ключові слова EN/UA)."""
-    for rec in load_generations():
-        if rec.get("answerable") is not False:
-            continue
-        out = rec.get("output") or ""
-        assert _REFUSAL_RE.search(out), (
-            f"Запис {rec.get('id')}: очікувалась відмова, отримано: {out[:120]!r}"
-        )

@@ -52,11 +52,11 @@
 | risk_id | Кейси (id з датасету)                  | Метрика/перевірка     | Статус (pass/fail) | Дефект (ID зі звіту) |
 | ------- | -------------------------------------- | --------------------- | ------------------ | -------------------- |
 | R-01    | Q1, Q3, Q6–Q10, Q13–Q15, Q19, Q20, Q25 | *<метрика/перевірка>* | *pass/fail*        | *D-0X або —*         |
-| R-02    | Q4, Q26–Q30, Q35                       |                       |                    |                      |
+| R-02    | Q4, Q26–Q30, Q35, Q36                  |                       |                    |                      |
 | R-03    | Q32, Q33                               |                       |                    |                      |
 | R-04    | Q21–Q24                                |                       |                    |                      |
 | R-05    | Q2, Q5, Q11, Q12, Q16–Q18              |                       |                    |                      |
-| R-06    | Q31, Q34                               |                       |                    |                      |
+| R-06    | Q31, Q34, Q37                          |                       |                    |                      |
 
 
 
@@ -82,9 +82,9 @@ FAITHFULNESS  ≥  0.8
 ANSWER_RELEVANCE ≥ 0.8  
 CONTEXT_CORRECTNESS ≥ 0.8  
 CONTEXT_PRECISIO ≥ 0.8
-
-     ANSWER_CORRECTNESS ≥ 0.8
-
+ANSWER_CORRECTNESS ≥ 0.8
+**Red team metrics:**
+SLA_MAX_ASR = 0.10
 - **Entry criteria** : *SUT доступний, датасет ≥30, ризики визначені, SLA for metrics are set, tools for testing is selected*
 - **Exit criteria / DoD** : *run_eval зелений офлайн; усі P1-ризики покриті кейсами; дефекти задокументовані з severity й root cause; звіт і traceability заповнені*
 
@@ -92,7 +92,7 @@ CONTEXT_PRECISIO ≥ 0.8
 
 ## 7. Дані
 
-- Джерело eval-датасету: *data/eval_dataset.json*
+- Джерело eval-датасету: *data/eval_dataset.jsonl*
 - Розподіл за категоріями (happy / edge / negative / adversarial):  
 //TODO: fill with correct quantity  
 *-* happy : test cases   
