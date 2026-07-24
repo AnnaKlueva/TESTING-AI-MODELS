@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 GENERATIONS = ROOT / "outputs" / "generations.json"
 RAGAS_RESULTS_JSON = ROOT / "outputs" / "rag_evaluation_results.json"
+RAGAS_METRICS_LOG = ROOT / "outputs" / "ragas_metrics.log"
 
 JUDGE_MODEL_ID = "Qwen/Qwen3-8B"
 EMBED_MODEL_ID = "intfloat/multilingual-e5-base"
@@ -410,13 +411,17 @@ def _export_ragas_results(result, records: list[dict]):
 
     RAGAS_RESULTS_JSON.parent.mkdir(parents=True, exist_ok=True)
     df.to_json(RAGAS_RESULTS_JSON, orient="records", force_ascii=False, indent=2)
-    print(f"\nRagas results → {RAGAS_RESULTS_JSON}")
-    print(df.to_string(index=False))
     return df
 
 
-def _mean_ragas_metric(rows: list[dict], key: str) -> float | None:
-    """Середнє по ключу; ігнорує None/NaN. None якщо немає валідних значень."""
+def _mean_ragas_metric(
+    rows: list[dict], key: str
+) -> tuple[float | None, int, int]:
+    """
+    Середнє по ключу; ігнорує None/NaN.
+    Повертає (mean | None, n_scored, n_total).
+    """
+    n_total = len(rows)
     vals: list[float] = []
     for row in rows:
         v = row.get(key)
@@ -429,20 +434,28 @@ def _mean_ragas_metric(rows: list[dict], key: str) -> float | None:
         if fv != fv:  # NaN
             continue
         vals.append(fv)
+    n_scored = len(vals)
     if not vals:
-        return None
-    return sum(vals) / len(vals)
+        return None, n_scored, n_total
+    return sum(vals) / n_scored, n_scored, n_total
+
+
+def _write_ragas_metrics_log(lines: list[str]) -> None:
+    """Пише summary метрик у outputs/ragas_metrics.log (не в консоль)."""
+    RAGAS_METRICS_LOG.parent.mkdir(parents=True, exist_ok=True)
+    RAGAS_METRICS_LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def test_ragas_qwen3_judge():
     """
     Ragas LLM-as-judge: Faithfulness, Answer Relevancy, Answer Correctness,
     Context Precision, Context Recall з локальним Qwen3-8B.
-    Зберігає per-example метрики у outputs/rag_evaluation_results.json.
+    Зберігає per-example метрики у outputs/rag_evaluation_results.json
+    і summary (mean + n_scored/n_total) у outputs/ragas_metrics.log.
     Assert: mean кожної метрики ≥ 0.8.
 
     Важкий тест (≈8B, GPU/Colab). Без моделі/VRAM — pytest.skip.
-    Запуск окремо: pytest tests/test_eval.py::test_ragas_qwen3_judge -v -s
+    Запуск окремо: pytest tests/test_eval.py::test_ragas_qwen3_judge -v
     """
     try:
         from ragas import evaluate
@@ -491,17 +504,42 @@ def test_ragas_qwen3_judge():
         ("context_recall", CONTEXT_RECALL_THRESHOLD),
     ]
 
-    print("\n=== Ragas mean metrics (LLM judge) ===")
+    log_lines = [
+        "=== Ragas mean metrics (LLM judge) ===",
+        f"results_json={RAGAS_RESULTS_JSON}",
+        f"n_cases={len(saved)}",
+    ]
     failures: list[str] = []
     for key, threshold in checks:
-        mean_val = _mean_ragas_metric(saved, key)
+        mean_val, n_scored, n_total = _mean_ragas_metric(saved, key)
+        coverage = f"n_scored/n_total={n_scored}/{n_total}"
         if mean_val is None:
-            print(f"{key}: n/a (усі значення null/NaN), threshold={threshold}")
-            failures.append(f"{key}=n/a (немає валідних значень), threshold={threshold}")
+            line = (
+                f"{key}: n/a (усі значення null/NaN), {coverage}, "
+                f"threshold={threshold}"
+            )
+            log_lines.append(line)
+            failures.append(
+                f"{key}=n/a (немає валідних значень), {coverage}, threshold={threshold}"
+            )
             continue
         status = "PASS" if mean_val >= threshold else "FAIL"
-        print(f"{key}: {mean_val:.4f} (threshold={threshold}) [{status}]")
+        line = (
+            f"{key}: {mean_val:.4f} ({coverage}) "
+            f"(threshold={threshold}) [{status}]"
+        )
+        log_lines.append(line)
         if mean_val < threshold:
-            failures.append(f"{key}={mean_val:.4f} < {threshold}")
+            failures.append(
+                f"{key}={mean_val:.4f} < {threshold} ({coverage})"
+            )
+
+    if failures:
+        log_lines.append("failures:")
+        log_lines.extend(f"  - {f}" for f in failures)
+    else:
+        log_lines.append("failures: none")
+
+    _write_ragas_metrics_log(log_lines)
 
     assert not failures, "Ragas metrics below threshold:\n  - " + "\n  - ".join(failures)
