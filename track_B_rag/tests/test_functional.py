@@ -7,14 +7,14 @@
 """
 
 import json
-import re
 from pathlib import Path
 
 import pytest
 
+from generations_loader import load_generations
+
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "data" / "eval_dataset.jsonl"
-GENERATIONS = ROOT / "outputs" / "generations.json"
 
 
 def load_cases() -> list[dict]:
@@ -25,19 +25,17 @@ def load_cases() -> list[dict]:
             if line.strip() and not line.lstrip().startswith("//")
         ]
 
-
-def load_generations() -> list[dict]:
-    if not GENERATIONS.exists():
-        pytest.skip("Спершу згенеруй outputs/generations.json: `python src/generate.py`")
-    return json.loads(GENERATIONS.read_text(encoding="utf-8"))
-
-
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.functional
 def test_dataset_has_min_cases():
     """Sanity: датасет містить достатньо кейсів (≥30)."""
     cases = load_cases()
     assert len(cases) >= 30, "Додай тест-кейси до data/eval_dataset.jsonl"
 
-
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.functional
 def test_dataset_schema():
     """Кожен кейс має обов'язкові метадані (мапінг на ризики)."""
     required = {"id", "category", "risk_id", "input", "severity"}
@@ -45,13 +43,17 @@ def test_dataset_schema():
         missing = required - case.keys()
         assert not missing, f"Кейс {case.get('id')} без полів: {missing}"
 
-
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.functional
 def test_generations_have_output():
     """Кожен збережений запис містить 'output' (контракт кроку генерації)."""
     for rec in load_generations():
         assert "output" in rec, f"Запис {rec.get('id')} без 'output'"
 
-
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.functional
 def test_generations_have_sources_and_contexts():
     """Контракт треку B: sources (ids) і contexts (тексти чанків)."""
     for rec in load_generations():
@@ -73,7 +75,9 @@ def test_generations_have_sources_and_contexts():
             f"Запис {cid}: len(contexts)={len(ctxs)} != len(sources)={len(rec['sources'])}"
         )
 
-
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.functional
 def test_answerable_output_non_empty():
     """Для answerable=true відповідь не порожня."""
     for rec in load_generations():

@@ -19,11 +19,12 @@ from typing import Any
 
 import pytest
 
+from generations_loader import load_generations
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
-GENERATIONS = ROOT / "outputs" / "generations.json"
 RAGAS_RESULTS_JSON = ROOT / "outputs" / "rag_evaluation_results.json"
 RAGAS_METRICS_LOG = ROOT / "outputs" / "ragas_metrics.log"
 
@@ -40,12 +41,6 @@ CONTEXT_RECALL_THRESHOLD = 0.8
 
 # os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "YES")
 os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
-
-
-def load_generations() -> list[dict]:
-    if not GENERATIONS.exists():
-        pytest.skip("Спершу згенеруй outputs/generations.json: `python src/generate.py`")
-    return json.loads(GENERATIONS.read_text(encoding="utf-8"))
 
 
 def pass_rate_by_case(records, predicate) -> dict:
@@ -71,7 +66,9 @@ def _one_run_per_id(records: list[dict]) -> list[dict]:
 
 # ────────────────────── RETRIEVAL tests ─────────────────────────────────
 
-
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.retrieval
 def test_retrieval_hit_pass_rate():
     """Hit@K: хоч один gold_doc_id у sources; pass-rate по кейсах ≥ порогу."""
     records = _answerable_with_gold(load_generations())
@@ -90,6 +87,9 @@ def test_retrieval_hit_pass_rate():
     )
 
 
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.retrieval
 def test_retrieval_mrr():
     """Середній MRR по кейсах із gold."""
     from metrics.custom_metrics import reciprocal_rank, aggregate
@@ -110,6 +110,9 @@ def test_retrieval_mrr():
     assert mean_mrr >= PASS_RATE_THRESHOLD, f"mean MRR={mean_mrr:.3f}"
 
 
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.retrieval
 def test_retrieval_recall():
     """Середній Recall@K по кейсах із gold."""
     from metrics.custom_metrics import recall_at_k, aggregate
@@ -130,6 +133,9 @@ def test_retrieval_recall():
     assert mean_recall >= PASS_RATE_THRESHOLD, f"mean Recall@K={mean_recall:.3f}"
 
 
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.retrieval
 def test_retrieval_ndcg():
     """Середній NDCG@K по кейсах із gold."""
     from metrics.custom_metrics import ndcg_at_k, aggregate
@@ -150,6 +156,9 @@ def test_retrieval_ndcg():
     assert mean_ndcg >= PASS_RATE_THRESHOLD, f"mean NDCG@K={mean_ndcg:.3f}"
 
 
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.retrieval
 def test_retrieval_precision():
     """Середня Precision@K по кейсах із gold."""
     from metrics.custom_metrics import precision_at_k, aggregate
@@ -445,7 +454,8 @@ def _write_ragas_metrics_log(lines: list[str]) -> None:
     RAGAS_METRICS_LOG.parent.mkdir(parents=True, exist_ok=True)
     RAGAS_METRICS_LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-
+@pytest.mark.regression
+@pytest.mark.llm_as_judge
 def test_ragas_qwen3_judge():
     """
     Ragas LLM-as-judge: Faithfulness, Answer Relevancy, Answer Correctness,

@@ -1,0 +1,458 @@
+name: AI CI/CD — Track B RAG
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "rag_sut.py"
+      - "tests/**"
+      - "data/eval_dataset.jsonl"
+      - "outputs/generations.json"
+      - "run_eval.sh"
+      - "requirements.txt"
+      - ".github/workflows/ai-pr-gate.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "rag_sut.py"
+      - "tests/**"
+      - "data/eval_dataset.jsonl"
+      - "outputs/generations.json"
+      - "run_eval.sh"
+      - "requirements.txt"
+      - ".github/workflows/ai-pr-gate.yml"
+  # Nightly job is disabled — no GPU on GitHub-hosted runners    
+  # schedule:
+  #   # Nightly — disabled (no GPU runners; re-enable when needed)
+  #   - cron: "0 2 * * *"
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  TRACK: B
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  # ── 1. PR gate (blocks merge) ───────────────────────────────────────────────
+  pr-gate:
+    name: PR gate
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            needs_generation:
+              - 'src/**'
+              - 'data/eval_dataset.jsonl'
+
+      - name: Notify owner — manual generation required (no GPU in CI)
+        if: steps.changes.outputs.needs_generation == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const body = [
+              '## Manual generation required',
+              '',
+              'Changes detected in `src/**` or `data/eval_dataset.jsonl`.',
+              'GitHub-hosted runners have **no GPU**, so `outputs/generations.json` must be regenerated **outside** GitHub Actions.',
+              '',
+              '**Run locally (Colab / GPU machine):**',
+              '```bash',
+              'TRACK=B python src/generate.py',
+              '```',
+              'Then commit and push `outputs/generations.json`.',
+              '',
+              `Workflow run: ${runUrl}`,
+            ].join('\n');
+
+            if (context.eventName === 'pull_request') {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: context.issue.number,
+                body: `@${owner}\n\n${body}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title: `[CI] Manual regeneration required — ${context.workflow}`,
+                body: `@${owner}\n\n${body}`,
+              });
+            }
+
+      - name: Fail — generation must be done outside GitHub Actions
+        if: steps.changes.outputs.needs_generation == 'true'
+        run: |
+          {
+            echo "## Manual generation required"
+            echo ""
+            echo "Changes in \`src/**\` or \`data/eval_dataset.jsonl\` require regenerating \`outputs/generations.json\`."
+            echo "GitHub Actions has no GPU nodes — run locally, then commit the artifact:"
+            echo ""
+            echo '```bash'
+            echo "TRACK=B python src/generate.py"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Manual generation required::Regenerate outputs/generations.json outside CI (no GPU). Run: TRACK=B python src/generate.py"
+          exit 1
+
+      - name: Using committed generations (no src/dataset changes)
+        if: steps.changes.outputs.needs_generation != 'true'
+        run: echo "No src/ or data/eval_dataset.jsonl changes — using committed outputs/generations.json."
+
+      - name: Smoke suite (@pytest.mark.smoke)
+        if: steps.changes.outputs.needs_generation != 'true'
+        run: python -m pytest -m smoke -v
+
+      - name: Upload artifacts
+        if: always() && steps.changes.outputs.needs_generation != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-gate-artifacts
+          path: |
+            outputs/generations.json
+            outputs/rag_evaluation_results.json
+            outputs/ragas_metrics.log
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## PR gate"
+            echo "- Generation: ${{ steps.changes.outputs.needs_generation == 'true' && '**blocked — manual regen required (no GPU)**' || 'skipped (committed generations.json)' }}"
+            echo "- Tests: \`pytest -m smoke\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Email notify on job failure
+        if: failure() && secrets.SMTP_SERVER != ''
+        uses: ./.github/actions/notify-job-failure
+        with:
+          job-name: PR gate
+          owner-email: ${{ secrets.NOTIFY_OWNER_EMAIL }}
+          pr-author-email: ${{ secrets.NOTIFY_PR_AUTHOR_EMAIL }}
+          smtp-server: ${{ secrets.SMTP_SERVER }}
+          smtp-port: ${{ secrets.SMTP_PORT }}
+          smtp-username: ${{ secrets.SMTP_USERNAME }}
+          smtp-password: ${{ secrets.SMTP_PASSWORD }}
+          from-email: ${{ secrets.SMTP_FROM_EMAIL }}
+
+      - name: Email notify skipped (SMTP not configured)
+        if: failure() && secrets.SMTP_SERVER == ''
+        run: echo "::warning::Job failed. Configure SMTP_* and NOTIFY_* repository secrets to enable failure emails."
+
+  # ── 2. Nightly (disabled) ───────────────────────────────────────────────────
+  nightly:
+    name: Nightly run
+    if: github.event_name == 'schedule'  # disabled — no GPU on GitHub-hosted runners
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Detect src/dataset changes (last 24h)
+        id: changes
+        run: |
+          changed=$(git log --since="24 hours ago" --name-only --pretty=format: \
+            | grep -E '^src/|^data/eval_dataset\.jsonl$' || true)
+          if [ -n "$changed" ]; then
+            echo "needs_generation=true" >> "$GITHUB_OUTPUT"
+            echo "Changed paths:"; echo "$changed"
+          else
+            echo "needs_generation=false" >> "$GITHUB_OUTPUT"
+            echo "No src/ or data/eval_dataset.jsonl changes in the last 24h."
+          fi
+
+      - name: Notify owner — manual generation required (no GPU in CI)
+        if: steps.changes.outputs.needs_generation == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const body = [
+              '## Manual generation required (nightly)',
+              '',
+              'Changes in `src/**` or `data/eval_dataset.jsonl` in the last 24h.',
+              'GitHub-hosted runners have **no GPU** — regenerate `outputs/generations.json` outside CI.',
+              '',
+              '```bash',
+              'TRACK=B python src/generate.py',
+              '```',
+              '',
+              `Workflow run: ${runUrl}`,
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner,
+              repo,
+              title: `[Nightly] Manual regeneration required — ${context.workflow}`,
+              body: `@${owner}\n\n${body}`,
+            });
+
+      - name: Fail — generation must be done outside GitHub Actions
+        if: steps.changes.outputs.needs_generation == 'true'
+        run: |
+          echo "::error title=Manual generation required::Regenerate outputs/generations.json outside CI (no GPU). Run: TRACK=B python src/generate.py"
+          exit 1
+
+      - name: Using committed generations (no src/dataset changes)
+        if: steps.changes.outputs.needs_generation != 'true'
+        run: echo "No recent src/ or data/eval_dataset.jsonl changes — using committed outputs/generations.json."
+
+      - name: Full offline eval (functional + eval + red-team)
+        if: steps.changes.outputs.needs_generation != 'true'
+        run: bash run_eval.sh
+
+      - name: Adversarial safe-refusal + ASR
+        if: steps.changes.outputs.needs_generation != 'true' && hashFiles('outputs/generations.json') != ''
+        run: python -m pytest tests/test_redteam.py::test_safe_refusal -v
+
+      - name: Ragas LLM-as-judge (GPU if available)
+        if: steps.changes.outputs.needs_generation != 'true' && hashFiles('outputs/generations.json') != ''
+        continue-on-error: true
+        run: python -m pytest tests/test_eval.py::test_ragas_qwen3_judge -v
+
+      - name: Upload artifacts
+        if: always() && steps.changes.outputs.needs_generation != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-artifacts
+          path: |
+            outputs/generations.json
+            outputs/rag_evaluation_results.json
+            outputs/ragas_metrics.log
+            reports/
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Nightly run"
+            echo "- Generation: ${{ steps.changes.outputs.needs_generation == 'true' && '**blocked — manual regen required (no GPU)**' || 'skipped (committed generations.json)' }}"
+            echo "- Tests: run_eval.sh + test_safe_refusal + test_ragas_qwen3_judge"
+            echo "- Blocks merge: **no** (alert only)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Email notify on job failure
+        if: failure() && secrets.SMTP_SERVER != ''
+        uses: ./.github/actions/notify-job-failure
+        with:
+          job-name: Nightly run
+          owner-email: ${{ secrets.NOTIFY_OWNER_EMAIL }}
+          pr-author-email: ${{ secrets.NOTIFY_PR_AUTHOR_EMAIL }}
+          smtp-server: ${{ secrets.SMTP_SERVER }}
+          smtp-port: ${{ secrets.SMTP_PORT }}
+          smtp-username: ${{ secrets.SMTP_USERNAME }}
+          smtp-password: ${{ secrets.SMTP_PASSWORD }}
+          from-email: ${{ secrets.SMTP_FROM_EMAIL }}
+
+      - name: Email notify skipped (SMTP not configured)
+        if: failure() && secrets.SMTP_SERVER == ''
+        run: echo "::warning::Job failed. Configure SMTP_* and NOTIFY_* repository secrets to enable failure emails."
+
+  # ── 3. Merge to main (blocks promotion) ─────────────────────────────────────
+  merge-to-main:
+    name: Merge to main
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            needs_generation:
+              - 'src/**'
+              - 'data/eval_dataset.jsonl'
+
+      - name: Notify owner — manual generation required (no GPU in CI)
+        if: steps.changes.outputs.needs_generation == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const body = [
+              '## Manual generation required',
+              '',
+              'Changes detected in `src/**` or `data/eval_dataset.jsonl` on push to main.',
+              'GitHub-hosted runners have **no GPU** — regenerate `outputs/generations.json` outside CI.',
+              '',
+              '```bash',
+              'TRACK=B python src/generate.py',
+              '```',
+              'Then commit and push `outputs/generations.json`.',
+              '',
+              `Workflow run: ${runUrl}`,
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner,
+              repo,
+              title: `[CI] Manual regeneration required — merge to main`,
+              body: `@${owner}\n\n${body}`,
+            });
+
+      - name: Fail — generation must be done outside GitHub Actions
+        if: steps.changes.outputs.needs_generation == 'true'
+        run: |
+          echo "::error title=Manual generation required::Regenerate outputs/generations.json outside CI (no GPU). Run: TRACK=B python src/generate.py"
+          exit 1
+
+      - name: Using committed generations (no src/dataset changes)
+        if: steps.changes.outputs.needs_generation != 'true'
+        run: echo "No src/ or data/eval_dataset.jsonl changes — using committed outputs/generations.json."
+
+      - name: Data validation + functional contract
+        if: steps.changes.outputs.needs_generation != 'true'
+        run: python -m pytest tests/test_functional.py -v
+
+      - name: Full retrieval suite (offline, all 37 cases, no Ragas)
+        if: steps.changes.outputs.needs_generation != 'true' && hashFiles('outputs/generations.json') != ''
+        run: python -m pytest tests/test_eval.py -k "retrieval and not ragas" -v
+
+      - name: Retrieval report
+        if: steps.changes.outputs.needs_generation != 'true' && hashFiles('outputs/generations.json') != ''
+        run: python src/report_retrieval.py --k 3
+
+      - name: Safety — 0 critical secret leaks (hard fail)
+        if: steps.changes.outputs.needs_generation != 'true' && hashFiles('outputs/generations.json') != ''
+        run: python -m pytest tests/test_redteam.py::test_no_secret_leak -v
+
+      - name: Upload artifacts
+        if: always() && steps.changes.outputs.needs_generation != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: merge-to-main-artifacts
+          path: |
+            outputs/generations.json
+            reports/
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Merge to main"
+            echo "- Generation: ${{ steps.changes.outputs.needs_generation == 'true' && '**blocked — manual regen required (no GPU)**' || 'skipped (committed generations.json)' }}"
+            echo "- Tests: functional + full retrieval + test_no_secret_leak"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Email notify on job failure
+        if: failure() && secrets.SMTP_SERVER != ''
+        uses: ./.github/actions/notify-job-failure
+        with:
+          job-name: Merge to main
+          owner-email: ${{ secrets.NOTIFY_OWNER_EMAIL }}
+          pr-author-email: ${{ secrets.NOTIFY_PR_AUTHOR_EMAIL }}
+          smtp-server: ${{ secrets.SMTP_SERVER }}
+          smtp-port: ${{ secrets.SMTP_PORT }}
+          smtp-username: ${{ secrets.SMTP_USERNAME }}
+          smtp-password: ${{ secrets.SMTP_PASSWORD }}
+          from-email: ${{ secrets.SMTP_FROM_EMAIL }}
+
+      - name: Email notify skipped (SMTP not configured)
+        if: failure() && secrets.SMTP_SERVER == ''
+        run: echo "::warning::Job failed. Configure SMTP_* and NOTIFY_* repository secrets to enable failure emails."
+
+  # ── 4. Release (mocked — pre-deploy gate) ───────────────────────────────────
+  release:
+    name: Release
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "[MOCK] Fresh multi-run generation"
+        run: |
+          echo "::notice::Release job is mocked — generation step not executed."
+          echo "Would run: TRACK=B python src/generate.py --n-runs 5"
+
+      - name: "[MOCK] Full eval + Ragas + red-team"
+        run: |
+          echo "::notice::Release job is mocked — eval suite not executed."
+          echo "Would run: bash run_eval.sh"
+          echo "Would run: python -m pytest tests/test_eval.py::test_ragas_qwen3_judge -v"
+          echo "Would run: python -m pytest tests/test_redteam.py -v"
+
+      - name: "[MOCK] Human review + release notes"
+        run: |
+          echo "::notice::Release job is mocked — human review gate not executed."
+          echo "Would require: defect review, release notes sign-off, post-deploy monitoring plan"
+
+      - name: Job summary
+        run: |
+          {
+            echo "## Release (mocked)"
+            echo "This job is a placeholder for the pre-deploy gate described in \`ci_cd_track_b_rag.md\`."
+            echo ""
+            echo "| Step | Status |"
+            echo "|------|--------|"
+            echo "| \`TRACK=B python src/generate.py --n-runs 5\` | mocked |"
+            echo "| Full eval + Ragas + red-team | mocked |"
+            echo "| Human review / release notes | mocked |"
+            echo "| Post-deploy monitoring | mocked |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Email notify on job failure
+        if: failure() && secrets.SMTP_SERVER != ''
+        uses: ./.github/actions/notify-job-failure
+        with:
+          job-name: Release
+          owner-email: ${{ secrets.NOTIFY_OWNER_EMAIL }}
+          pr-author-email: ${{ secrets.NOTIFY_PR_AUTHOR_EMAIL }}
+          smtp-server: ${{ secrets.SMTP_SERVER }}
+          smtp-port: ${{ secrets.SMTP_PORT }}
+          smtp-username: ${{ secrets.SMTP_USERNAME }}
+          smtp-password: ${{ secrets.SMTP_PASSWORD }}
+          from-email: ${{ secrets.SMTP_FROM_EMAIL }}
+
+      - name: Email notify skipped (SMTP not configured)
+        if: failure() && secrets.SMTP_SERVER == ''
+        run: echo "::warning::Job failed. Configure SMTP_* and NOTIFY_* repository secrets to enable failure emails."

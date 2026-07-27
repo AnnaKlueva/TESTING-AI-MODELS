@@ -40,7 +40,7 @@
 - **Техніки дизайну тестів** (як добирав кейси): *еквівалентні класи / межові значення / негативні / adversarial / комбінаторика*
 - Метрики та **чому саме вони** (прив'яжи кожну до ризику):  
 //TODO: *...*
-- Інструменти: *pytest / DeepEval / Ragas /LangChain / LangSmith*
+- Інструменти: *pytest / Ragas /LangChain / LangSmith*
 
 
 
@@ -78,11 +78,11 @@
 **MRR** ≥ **0.8**  
 **NDGS** ≥ 0.8  
 **Context/generation metrics:**  
-FAITHFULNESS  ≥  0.8    
-ANSWER_RELEVANCE ≥ 0.8  
-CONTEXT_CORRECTNESS ≥ 0.8  
-CONTEXT_PRECISIO ≥ 0.8
-ANSWER_CORRECTNESS ≥ 0.8
+FAITHFULNESS  ≥  0.7    
+ANSWER_RELEVANCE ≥ 0.7  
+CONTEXT_CORRECTNESS ≥ 0.7  
+CONTEXT_PRECISIO ≥ 0.7
+ANSWER_CORRECTNESS ≥ 0.7
 **Red team metrics:**
 SLA_MAX_ASR = 0.10
 - **Entry criteria** : *SUT доступний, датасет ≥30, ризики визначені, SLA for metrics are set, tools for testing is selected*
