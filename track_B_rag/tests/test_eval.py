@@ -6,6 +6,9 @@
    input / contexts / output / expected з outputs/generations.json
    (faithfulness, answer_relevancy, answer_correctness,
    context_precision, context_recall).
+
+Конфігурація: tests/config.py (пороги, шляхи, моделі).
+LLM-суддя:   tests/judge_config.py (завантаження моделі, обгортки).
 """
 
 from __future__ import annotations
@@ -15,33 +18,37 @@ import os
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 import pytest
 
+from config import (
+    ANSWER_CORRECTNESS_THRESHOLD,
+    ANSWER_RELEVANCY_THRESHOLD,
+    CONTEXT_PRECISION_THRESHOLD,
+    CONTEXT_RECALL_THRESHOLD,
+    FAITHFULNESS_THRESHOLD,
+    GPU_PROFILE,
+    PASS_RATE_THRESHOLD,
+    RAGAS_METRICS_LOG,
+    RAGAS_RESULTS_JSON,
+)
 from generations_loader import load_generations
+from judge_config import (
+    JudgeSetupError,
+    build_ragas_metrics,
+    load_qwen3_judge,
+    wrap_embeddings_for_ragas,
+    wrap_judge_for_ragas,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
-RAGAS_RESULTS_JSON = ROOT / "outputs" / "rag_evaluation_results.json"
-RAGAS_METRICS_LOG = ROOT / "outputs" / "ragas_metrics.log"
-
-JUDGE_MODEL_ID = "Qwen/Qwen3-8B"
-EMBED_MODEL_ID = "intfloat/multilingual-e5-base"
-
-# Пороги — обґрунтуй у test_strategy.md (розділ 5 / 6).
-PASS_RATE_THRESHOLD = 0.8
-FAITHFULNESS_THRESHOLD = 0.8
-ANSWER_RELEVANCY_THRESHOLD = 0.8
-ANSWER_CORRECTNESS_THRESHOLD = 0.8
-CONTEXT_PRECISION_THRESHOLD = 0.8
-CONTEXT_RECALL_THRESHOLD = 0.8
-
-# os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "YES")
 os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
 
+
+# ────────────────────── helpers ─────────────────────────────────────────
 
 def pass_rate_by_case(records, predicate) -> dict:
     """Частка прогонів, що проходять `predicate`, окремо для кожного case id."""
@@ -55,13 +62,106 @@ def _answerable_with_gold(records: list[dict]) -> list[dict]:
     return [r for r in records if r.get("gold_doc_ids")]
 
 
-
 def _one_run_per_id(records: list[dict]) -> list[dict]:
     """Перший прогін на id (щоб не дублювати при --n-runs)."""
     seen: dict[str, dict] = {}
     for rec in records:
         seen.setdefault(rec["id"], rec)
     return list(seen.values())
+
+
+def _records_for_ragas(records: list[dict]) -> list[dict]:
+    """Кейси з input / contexts / output; один прогін на id."""
+    usable = []
+    for rec in _one_run_per_id(records):
+        if "contexts" not in rec:
+            pytest.skip(
+                "У generations.json немає 'contexts' — перегенеруй: python src/generate.py"
+            )
+        if not (rec.get("input") and rec.get("output") is not None):
+            continue
+        usable.append(rec)
+    if not usable:
+        pytest.skip("Немає записів із input/contexts/output для Ragas")
+    return usable
+
+
+def _to_hf_dataset(records: list[dict]):
+    """Конвертує generations → Hugging Face Dataset (колонки Ragas)."""
+    try:
+        from datasets import Dataset
+    except ImportError as ex:
+        pytest.skip(f"datasets недоступний: {ex!r}")
+
+    rows = {
+        "user_input": [r["input"] for r in records],
+        "retrieved_contexts": [list(r.get("contexts") or []) for r in records],
+        "response": [r.get("output") or "" for r in records],
+        "reference": [r.get("expected") or "" for r in records],
+        "question": [r["input"] for r in records],
+        "contexts": [list(r.get("contexts") or []) for r in records],
+        "answer": [r.get("output") or "" for r in records],
+        "ground_truth": [r.get("expected") or "" for r in records],
+        "id": [r["id"] for r in records],
+    }
+    return Dataset.from_dict(rows)
+
+
+def _export_ragas_results(result, records: list[dict]):
+    """Результати → pandas DataFrame → JSON. Повертає DataFrame."""
+    try:
+        import pandas as pd
+    except ImportError as ex:
+        pytest.skip(f"pandas недоступний: {ex!r}")
+
+    if hasattr(result, "to_pandas"):
+        df = result.to_pandas()
+    elif isinstance(result, dict):
+        df = pd.DataFrame([result])
+    else:
+        try:
+            df = pd.DataFrame(dict(result))
+        except Exception:
+            df = pd.DataFrame([dict(result)])
+
+    if len(df) == len(records) and "id" not in df.columns:
+        df.insert(0, "id", [r["id"] for r in records])
+
+    RAGAS_RESULTS_JSON.parent.mkdir(parents=True, exist_ok=True)
+    df.to_json(RAGAS_RESULTS_JSON, orient="records", force_ascii=False, indent=2)
+    return df
+
+
+def _mean_ragas_metric(
+    rows: list[dict], key: str
+) -> tuple[float | None, int, int]:
+    """
+    Середнє по ключу; ігнорує None/NaN.
+    Повертає (mean | None, n_scored, n_total).
+    """
+    n_total = len(rows)
+    vals: list[float] = []
+    for row in rows:
+        v = row.get(key)
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if fv != fv:  # NaN
+            continue
+        vals.append(fv)
+    n_scored = len(vals)
+    if not vals:
+        return None, n_scored, n_total
+    return sum(vals) / n_scored, n_scored, n_total
+
+
+def _write_ragas_metrics_log(lines: list[str]) -> None:
+    """Пише summary метрик у outputs/ragas_metrics.log."""
+    RAGAS_METRICS_LOG.parent.mkdir(parents=True, exist_ok=True)
+    RAGAS_METRICS_LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 # ────────────────────── RETRIEVAL tests ─────────────────────────────────
@@ -178,281 +278,8 @@ def test_retrieval_precision():
     print(f"\nMean Precision@K (k={k}): {mean_precision:.3f}, threshold={PASS_RATE_THRESHOLD}")
     assert mean_precision >= PASS_RATE_THRESHOLD, f"mean Precision@K={mean_precision:.3f}"
 
-# CONTEXT + GENERATION tests
-# ────────────────────── RAGAS + local Qwen3-8B judge ────────────────────
 
-
-def _records_for_ragas(records: list[dict]) -> list[dict]:
-    """Кейси з input / contexts / output; один прогін на id."""
-    usable = []
-    for rec in _one_run_per_id(records):
-        if "contexts" not in rec:
-            pytest.skip(
-                "У generations.json немає 'contexts' — перегенеруй: python src/generate.py"
-            )
-        if not (rec.get("input") and rec.get("output") is not None):
-            continue
-        usable.append(rec)
-    if not usable:
-        pytest.skip("Немає записів із input/contexts/output для Ragas")
-    return usable
-
-
-def _to_hf_dataset(records: list[dict]):
-    """Конвертує generations → Hugging Face Dataset (колонки Ragas)."""
-    try:
-        from datasets import Dataset
-    except Exception as ex:
-        pytest.skip(f"datasets недоступний: {ex!r}")
-
-    rows = {
-        # нові імена колонок (ragas ≥0.2)
-        "user_input": [r["input"] for r in records],
-        "retrieved_contexts": [list(r.get("contexts") or []) for r in records],
-        "response": [r.get("output") or "" for r in records],
-        "reference": [r.get("expected") or "" for r in records],
-        # legacy-імена (ragas 0.1.x)
-        "question": [r["input"] for r in records],
-        "contexts": [list(r.get("contexts") or []) for r in records],
-        "answer": [r.get("output") or "" for r in records],
-        "ground_truth": [r.get("expected") or "" for r in records],
-        "id": [r["id"] for r in records],
-    }
-    return Dataset.from_dict(rows)
-
-
-def _load_qwen3_judge():
-    """
-    Локальний Qwen3-8B для Ragas.
-    4-bit через BitsAndBytesConfig (Colab GPU); без bnb — MPS/CPU fp16/bf16.
-    Потрібен transformers>=4.51 (підтримка model_type=qwen3).
-    max_new_tokens=1024, enable_thinking=False (інакше Ragas часто дістає null).
-    """
-    try:
-        import torch
-        import transformers
-        from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-    except Exception as ex:
-        pytest.skip(f"transformers/torch недоступні: {ex!r}")
-
-    # Qwen3 з'явився в transformers≈4.51
-    ver = tuple(int(x) for x in transformers.__version__.split(".")[:2])
-    if ver < (4, 51):
-        pytest.skip(
-            f"transformers={transformers.__version__} не знає qwen3; "
-            f"онови: pip install -U 'transformers>=4.51'"
-        )
-
-    model_kwargs: dict[str, Any] = {"device_map": "auto", "trust_remote_code": True}
-    try:
-        import bitsandbytes  # noqa: F401
-        from transformers import BitsAndBytesConfig
-
-        if torch.cuda.is_available():
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
-        else:
-            raise RuntimeError("bitsandbytes 4-bit потребує CUDA")
-    except Exception:
-        # Mac (MPS) / CPU: без 4-bit
-        if torch.backends.mps.is_available():
-            model_kwargs["torch_dtype"] = torch.float16
-        elif torch.cuda.is_available():
-            model_kwargs["torch_dtype"] = torch.bfloat16
-        else:
-            model_kwargs["torch_dtype"] = torch.float32
-
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(JUDGE_MODEL_ID, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(JUDGE_MODEL_ID, **model_kwargs)
-    except Exception as ex:
-        pytest.skip(f"не вдалося завантажити {JUDGE_MODEL_ID}: {type(ex).__name__}: {ex}")
-
-    # Qwen3: thinking увімкнений за замовчуванням у chat template —
-    # вимикаємо, щоб Ragas отримував короткий JSON/verdict, а не <think>…
-    _orig_apply = tokenizer.apply_chat_template
-
-    def _apply_chat_template_no_think(*args, **kwargs):
-        kwargs["enable_thinking"] = False
-        return _orig_apply(*args, **kwargs)
-
-    tokenizer.apply_chat_template = _apply_chat_template_no_think
-
-    # temperature=0 / do_sample=False — детермінований суддя
-    gen_pipeline = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=1024,
-        do_sample=False,
-        temperature=0,
-        return_full_text=False,
-    )
-    return _Qwen3NoThinkPipeline(gen_pipeline)
-
-
-class _Qwen3NoThinkPipeline:
-    """
-    Ragas/LangChain подають звичайний str-промпт.
-    Обгортаємо його в chat template з enable_thinking=False.
-    """
-
-    def __init__(self, inner):
-        self._inner = inner
-        self.tokenizer = inner.tokenizer
-        self.model = inner.model
-
-    def __call__(self, text_inputs, **kwargs):
-        single = isinstance(text_inputs, str)
-        prompts = [text_inputs] if single else list(text_inputs)
-        formatted = [
-            self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": p}],
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
-            for p in prompts
-        ]
-        return self._inner(formatted[0] if single else formatted, **kwargs)
-
-    def __getattr__(self, name):
-        return getattr(self._inner, name)
-
-
-def _wrap_judge_for_ragas(gen_pipeline):
-    """LangChain-сумісний LLM → Ragas LangchainLLMWrapper."""
-    try:
-        from langchain_huggingface import HuggingFacePipeline
-        from ragas.llms import LangchainLLMWrapper
-    except Exception as ex:
-        pytest.skip(f"langchain/ragas wrappers недоступні: {ex!r}")
-
-    lc_llm = HuggingFacePipeline(pipeline=gen_pipeline)
-    return LangchainLLMWrapper(lc_llm)
-
-
-def _wrap_embeddings_for_ragas():
-    """Локальні e5-ембединги для AnswerRelevancy (без OpenAI)."""
-    try:
-        from langchain_huggingface import HuggingFaceEmbeddings
-        from ragas.embeddings import LangchainEmbeddingsWrapper
-    except Exception as ex:
-        pytest.skip(f"embeddings wrappers недоступні: {ex!r}")
-
-    emb = HuggingFaceEmbeddings(
-        model_name=EMBED_MODEL_ID,
-        encode_kwargs={"normalize_embeddings": True},
-    )
-    return LangchainEmbeddingsWrapper(emb)
-
-
-def _build_ragas_metrics(ragas_llm, ragas_embeddings):
-    """Faithfulness, Answer Relevancy/Correctness, Context Precision/Recall."""
-    try:
-        # ragas ≥0.2 class API
-        from ragas.metrics import (
-            AnswerCorrectness,
-            AnswerRelevancy,
-            ContextPrecision,
-            ContextRecall,
-            Faithfulness,
-        )
-
-        return [
-            Faithfulness(llm=ragas_llm),
-            AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embeddings),
-            AnswerCorrectness(llm=ragas_llm, embeddings=ragas_embeddings),
-            ContextPrecision(llm=ragas_llm),
-            ContextRecall(llm=ragas_llm),
-        ]
-    except Exception:
-        pass
-
-    try:
-        # ragas 0.1.x module-level metrics
-        from ragas.metrics import (
-            answer_correctness,
-            answer_relevancy,
-            context_precision,
-            context_recall,
-            faithfulness,
-        )
-
-        faithfulness.llm = ragas_llm
-        answer_relevancy.llm = ragas_llm
-        answer_relevancy.embeddings = ragas_embeddings
-        answer_correctness.llm = ragas_llm
-        answer_correctness.embeddings = ragas_embeddings
-        context_precision.llm = ragas_llm
-        context_recall.llm = ragas_llm
-        return [
-            faithfulness,
-            answer_relevancy,
-            answer_correctness,
-            context_precision,
-            context_recall,
-        ]
-    except Exception as ex:
-        pytest.skip(f"не вдалося зібрати Ragas-метрики: {ex!r}")
-
-
-def _export_ragas_results(result, records: list[dict]):
-    """Результати → pandas DataFrame → JSON. Повертає DataFrame."""
-    try:
-        import pandas as pd
-    except Exception as ex:
-        pytest.skip(f"pandas недоступний: {ex!r}")
-
-    # EvaluationResult у різних версіях ragas
-    if hasattr(result, "to_pandas"):
-        df = result.to_pandas()
-    elif isinstance(result, dict):
-        df = pd.DataFrame([result])
-    else:
-        try:
-            df = pd.DataFrame(dict(result))
-        except Exception:
-            df = pd.DataFrame([dict(result)])
-
-    # Підклеюємо id кейсів, якщо довжина збігається
-    if len(df) == len(records) and "id" not in df.columns:
-        df.insert(0, "id", [r["id"] for r in records])
-
-    RAGAS_RESULTS_JSON.parent.mkdir(parents=True, exist_ok=True)
-    df.to_json(RAGAS_RESULTS_JSON, orient="records", force_ascii=False, indent=2)
-    return df
-
-
-def _mean_ragas_metric(
-    rows: list[dict], key: str
-) -> tuple[float | None, int, int]:
-    """
-    Середнє по ключу; ігнорує None/NaN.
-    Повертає (mean | None, n_scored, n_total).
-    """
-    n_total = len(rows)
-    vals: list[float] = []
-    for row in rows:
-        v = row.get(key)
-        if v is None:
-            continue
-        try:
-            fv = float(v)
-        except (TypeError, ValueError):
-            continue
-        if fv != fv:  # NaN
-            continue
-        vals.append(fv)
-    n_scored = len(vals)
-    if not vals:
-        return None, n_scored, n_total
-    return sum(vals) / n_scored, n_scored, n_total
-
-
-def _write_ragas_metrics_log(lines: list[str]) -> None:
-    """Пише summary метрик у outputs/ragas_metrics.log (не в консоль)."""
-    RAGAS_METRICS_LOG.parent.mkdir(parents=True, exist_ok=True)
-    RAGAS_METRICS_LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
+# ────────────────────── RAGAS LLM-as-judge ──────────────────────────────
 
 @pytest.mark.regression
 @pytest.mark.llm_as_judge
@@ -462,7 +289,7 @@ def test_ragas_qwen3_judge():
     Context Precision, Context Recall з локальним Qwen3-8B.
     Зберігає per-example метрики у outputs/rag_evaluation_results.json
     і summary (mean + n_scored/n_total) у outputs/ragas_metrics.log.
-    Assert: mean кожної метрики ≥ 0.8.
+    Assert: mean кожної метрики ≥ порогу.
 
     Важкий тест (≈8B, GPU/Colab). Без моделі/VRAM — pytest.skip.
     Запуск окремо: pytest tests/test_eval.py::test_ragas_qwen3_judge -v
@@ -470,20 +297,24 @@ def test_ragas_qwen3_judge():
     try:
         from ragas import evaluate
         from ragas.run_config import RunConfig
-    except Exception as ex:
+    except ImportError as ex:
         pytest.skip(f"ragas недоступний: {ex!r}")
 
     records = _records_for_ragas(load_generations())
     dataset = _to_hf_dataset(records)
 
-    gen_pipeline = _load_qwen3_judge()
-    ragas_llm = _wrap_judge_for_ragas(gen_pipeline)
-    ragas_embeddings = _wrap_embeddings_for_ragas()
-    metrics = _build_ragas_metrics(ragas_llm, ragas_embeddings)
+    try:
+        gen_pipeline = load_qwen3_judge()
+        ragas_llm = wrap_judge_for_ragas(gen_pipeline)
+        ragas_embeddings = wrap_embeddings_for_ragas()
+        metrics = build_ragas_metrics(ragas_llm, ragas_embeddings)
+    except JudgeSetupError as ex:
+        pytest.skip(str(ex))
 
-    # Локальний Qwen3-8B: дефолт timeout=180s + max_workers=16 → TimeoutError.
-    # Один воркер + довший timeout під послідовну HF-інференцію.
-    run_config = RunConfig(timeout=600, max_workers=1, max_retries=3)
+    # 1xT4: один воркер (16 GB, 4-bit, послідовна інференція).
+    # 2xT4: fp16 через обидві GPU — більше VRAM, можна 2 воркери паралельно.
+    _max_workers = 2 if GPU_PROFILE == "2xT4" else 1
+    run_config = RunConfig(timeout=600, max_workers=_max_workers, max_retries=3)
 
     try:
         result = evaluate(
@@ -495,7 +326,6 @@ def test_ragas_qwen3_judge():
             run_config=run_config,
         )
     except TypeError:
-        # старіші сигнатури evaluate()
         result = evaluate(dataset=dataset, metrics=metrics)
     except Exception as ex:
         pytest.skip(f"Ragas evaluate впав (GPU/пам'ять/сумісність): {ex!r}")
