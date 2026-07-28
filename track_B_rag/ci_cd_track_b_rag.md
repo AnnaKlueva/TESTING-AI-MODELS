@@ -4,8 +4,8 @@
 
 CI/CD-конвеєр для цього SUT запускається на:
 
-- `pull_request` (не-draft)
-- `push` / merge у `main`
+- `pull_request` (не-draft) — **pre-merge gate**, блокує merge
+- `push` у `main` після merge — **post-merge gate**, перевіряє `main`, merge уже відбувся
 - nightly-розкладом (`schedule`)
 - on-demand перед релізом (manual `workflow_dispatch` / release tag)
 
@@ -35,16 +35,23 @@ CI/CD-конвеєр для цього SUT запускається на:
 
 
 
-### Merge to main — блокує merge to main
+### Post-merge gate (push to `main`)
 
-**Що:** повний офлайн-eval на всіх 37 кейсах із `outputs/generations.json` (functional + retrieval-метрики); red-team safety (no secret leak).
+Запускається **після** merge у `main` (`on: push`). Merge вже відбувся; цей job не може його заблокувати — лише підтверджує якість на `main` і сигналізує про регресію (failed check, email/issue).
 
-**Час:** ~10–20 хв (без GPU-judge).
-**Блокує:** так.
+**Що:** повний офлайн-eval на всіх 37 кейсах із `outputs/generations.json` (functional + retrieval-метрики); red-team safety (`test_no_secret_leak`); retrieval-звіт у `reports/`.
 
-Командa:
+**Час:** ~10–20 хв (без GPU-judge).  
+**Блокує merge:** ні (merge уже завершено) → **hard fail на `main` + alert** (GitHub check, email за наявності SMTP).
 
-- python -m pytest -m "smoke" -v
+Команди (як у `.github/workflows/ai-pr-gate.yml`, job `merge-to-main`):
+
+- `python -m pytest tests/test_functional.py -v`
+- `python -m pytest tests/test_eval.py -k "retrieval and not ragas" -v`
+- `python src/report_retrieval.py --k 3`
+- `python -m pytest tests/test_redteam.py::test_no_secret_leak -v`
+
+Еквівалент однією командою локально: `python -m pytest -m smoke -v`.
 
 
 ### Nightly — не блокує merge, лише alert
@@ -84,7 +91,9 @@ Example for lang="en":
 Quality gate — **договір команди про мінімально прийнятну якість**.
 Пороги калібруються на historical data проєкту: зафіксовані `≥ 0.8` у `test_strategy.md` i `≥ 0.7 для tests/test_eval.py`, спостережені Ragas-means нижчі (`faithfulness ≈ 0.50`, `answer_correctness ≈ 0.35`), ASR інколи > `0.10`. Тому merge-gates жорсткі лише там, де перевірки швидкі й стабільні.s
 
-### Merge blockers (PR / merge to main)
+### Merge blockers (лише PR gate)
+
+Pre-merge перевірки на `pull_request`. Post-merge job на `push` до `main` використовує ті самі пороги, але **не блокує merge** — див. §2 Post-merge gate.
 
 
 | Gate              | Умова                                                       | Джерело                                                              |
@@ -129,12 +138,12 @@ AI-тести можуть бути **probabilistic**. У цьому SUT ген�
 Бюджети, адаптовані під проєкт:
 
 
-| Етап          | Час (цей проєкт) | Бюджет лекції | Як контролювати                                                |
-| ------------- | ---------------- | ------------- | -------------------------------------------------------------- |
-| PR            | 2–5 хв           | ≤ $1          | офлайн JSON, smoke 10–15 кейсів, path filters                  |
-| Merge to main | 10–20 хв         | —             | повний offline suite, без Ragas                                |
-| Nightly       | 30–90 хв         | ≤ $10–50      | judge лише тут; кеш моделей HF; без зайвого regenerate         |
-| Release       | 1–3 год          | ≤ $100        | один повний regenerate + human review + post-deploy monitoring |
+| Етап                    | Час (цей проєкт) | Бюджет лекції | Як контролювати                                                  |
+| ----------------------- | ---------------- | ------------- | ---------------------------------------------------------------- |
+| PR (pre-merge)          | 2–5 хв           | ≤ $1          | офлайн JSON, smoke + severity_critical, path filters             |
+| Post-merge (push main)  | 10–20 хв         | —             | повний offline suite на `main`, без Ragas; alert, не блок merge  |
+| Nightly                 | 30–90 хв         | ≤ $10–50      | judge лише тут; кеш моделей HF; без зайвого regenerate           |
+| Release                 | 1–3 год          | ≤ $100        | один повний regenerate + human review + post-deploy monitoring   |
 
 
 Оптимізації:

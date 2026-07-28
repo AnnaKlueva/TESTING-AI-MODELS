@@ -123,9 +123,9 @@ jobs:
         if: steps.changes.outputs.needs_generation != 'true'
         run: echo "No src/ or data/eval_dataset.jsonl changes — using committed outputs/generations.json."
 
-      - name: Smoke suite (@pytest.mark.smoke)
+      - name: Smoke suite (smoke + severity_critical)
         if: steps.changes.outputs.needs_generation != 'true'
-        run: python -m pytest -m smoke -v
+        run: python -m pytest -m "smoke and severity_critical" -v
 
       - name: Upload artifacts
         if: always() && steps.changes.outputs.needs_generation != 'true'
@@ -144,7 +144,7 @@ jobs:
           {
             echo "## PR gate"
             echo "- Generation: ${{ steps.changes.outputs.needs_generation == 'true' && '**blocked — manual regen required (no GPU)**' || 'skipped (committed generations.json)' }}"
-            echo "- Tests: \`pytest -m smoke\`"
+            echo "- Tests: \`pytest -m "smoke and severity_critical"\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Email notify on job failure
