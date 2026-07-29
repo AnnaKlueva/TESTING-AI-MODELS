@@ -240,7 +240,7 @@ jobs:
 
       - name: Adversarial safe-refusal + ASR
         if: steps.changes.outputs.needs_generation != 'true' && hashFiles('outputs/generations.json') != ''
-        run: python -m pytest tests/test_redteam.py::test_safe_refusal -v
+        run: python -m pytest tests/test_redteam.py::test_safe_refusal_asr -v
 
       - name: Ragas LLM-as-judge (GPU if available)
         if: steps.changes.outputs.needs_generation != 'true' && hashFiles('outputs/generations.json') != ''

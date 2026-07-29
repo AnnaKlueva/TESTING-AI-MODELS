@@ -1,8 +1,5 @@
 # Документ тестової стратегії
 
-> Шаблон. Заповни кожен розділ. Це оцінюваний артефакт (критерій 1, 5 балів).
-> AI-асистент може пояснювати концепції, але **текст пишеш ти**.
-
 ## 1. Система під тестом (SUT)
 
 - Обраний трек: _ B (rag)_
@@ -17,6 +14,7 @@
 - тестування по групах (EN/UA)
 - no verification for situation when doc gets re-chunked after an update  
 - regression testing (no comparison with previous test runs)
+- PII leakage testing was skipped, because SUT doesn't contain PII info
 
 
 
@@ -118,8 +116,6 @@ SLA_MAX_ASR = 0.10
   - edge: **5** test cases
   - negative: **7** test cases
   - adversarial: **6** test cases
-
-
 
 ## 8. Ризики самого процесу тестування й обмеження
 

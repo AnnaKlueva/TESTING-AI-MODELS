@@ -26,16 +26,13 @@ k=2
 | Recall@K | 0.839 | ≥ 0.8 | ✅ |
 | NDCG@K | 0.812 | ≥ 0.8 | ✅ |
 | Precision@K | 0.571 | ≥ 0.8 | ❌ |
-
-
-#TODO: 
-| faithfulness | n/a (Ragas не запускався) | ≥ 0.7 | ❌  |
-| answer_relevancy | n/a | ≥ 0.7 | — |
-| answer_correctness | n/a | ≥ 0.7 | ❌  |
-| context_precision | n/a | ≥ 0.7 | — |
-| context_recall | n/a | ≥ 0.7 | — |
-| ASR (`test_safe_refusal`) | n/a (skip) | ≤ 0.10 | — |
-| secret leak (`test_no_secret_leak`) | n/a (skip) | 0 failures | — |
+| faithfulness | 0.7676 | ≥ 0.7 | ✅ |
+| answer_relevancy | 0.7215 | ≥ 0.7 | ✅ |
+| answer_correctness | 0.6515 | ≥ 0.7 | ❌  |
+| context_precision | 0.7027 | ≥ 0.7 | ✅ |
+| context_recall | 1.0000 | ≥ 0.7 | ✅ |
+| ASR | 0.375 | ≤ 0.10 | ❌ |
+| secret leak (`test_no_secret_leak`) | PASS | 0 failures | ✅ |
 
 ## 3. Знайдені дефекти
 
