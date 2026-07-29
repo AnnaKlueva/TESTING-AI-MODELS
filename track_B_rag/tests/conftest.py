@@ -53,7 +53,23 @@ def _apply_data_marker(
     return None
 
 
+_SUITE_MARKERS = {
+    "smoke": "fast PR-gate checks (functional + critical retrieval + secret leak)",
+    "regression": "full offline eval suite on committed generations.json",
+    "functional": "contract / schema checks on SUT output",
+    "retrieval": "retrieval metrics (MRR, Recall@k) against gold_doc_ids",
+    "redteam": "adversarial / safety checks",
+    "llm_as_judge": "Ragas metrics with local LLM judge (GPU, slow)",
+}
+
+
 def pytest_configure(config: pytest.Config) -> None:
+    if config.option.log_cli_level is None:
+        config.option.log_cli = True
+        config.option.log_cli_level = "INFO"
+        config.option.log_cli_format = "%(levelname)s %(message)s"
+    for name, description in _SUITE_MARKERS.items():
+        config.addinivalue_line("markers", f"{name}: {description}")
     for name, code in _LANG_MARKERS.items():
         config.addinivalue_line(
             "markers",

@@ -8,6 +8,7 @@ found defects:
 - problem with precision@k
 - fabrication : additing telephone number but no info in database about it
 - no mechanism that can work with out-of-scope questions like "longest river"
+- not each time it answers in language on which question was asked - add test for that
 
 ## 1. Резюме (TL;DR)
 
@@ -16,23 +17,25 @@ found defects:
 - **Головний висновок:** функціональні тести — **pass**; агреговані retrieval-метрики (MRR, Recall@K, NDCG@K, Precision@K, Hit pass-rate) — **pass** except Precision@K, context and generation metrics - partilly **pass** (failed for fairthfullness, answer correctness), red team tests - **fail**
 
 ## 2. Зведення метрик
+k=2
 
 | Метрика | Значення | Поріг | Статус |
 |---|---|---|---|
-| Hit pass-rate (per-case) | 1.00 (Q1, Q2) | ≥ 0.8 | ✅ |
-| MRR | 0.750 | ≥ 0.8 | ❌ |
-| Recall@K (k=2) | 0.750 | ≥ 0.8 | ❌ |
-| NDCG@K (k=2) | 0.693 | ≥ 0.8 | ❌ |
-| Precision@K (k=2) | 0.750 | ≥ 0.8 | ❌ |
-| faithfulness | n/a (Ragas не запускався) | ≥ 0.7 | — |
+| Hit pass-rate (per-case) | 1.00 | ≥ 0.8 | ✅ |
+| MRR | 0.893 | ≥ 0.8 | ✅ |
+| Recall@K | 0.839 | ≥ 0.8 | ✅ |
+| NDCG@K | 0.812 | ≥ 0.8 | ✅ |
+| Precision@K | 0.571 | ≥ 0.8 | ❌ |
+
+
+#TODO: 
+| faithfulness | n/a (Ragas не запускався) | ≥ 0.7 | ❌  |
 | answer_relevancy | n/a | ≥ 0.7 | — |
-| answer_correctness | n/a | ≥ 0.7 | — |
+| answer_correctness | n/a | ≥ 0.7 | ❌  |
 | context_precision | n/a | ≥ 0.7 | — |
 | context_recall | n/a | ≥ 0.7 | — |
 | ASR (`test_safe_refusal`) | n/a (skip) | ≤ 0.10 | — |
 | secret leak (`test_no_secret_leak`) | n/a (skip) | 0 failures | — |
-
-*Джерело: pytest `tests/test_eval.py`, `tests/test_redteam.py`, `tests/test_functional.py`; retrieval — 2 answerable-кейси з gold (Q1, Q2).*
 
 ## 3. Знайдені дефекти
 

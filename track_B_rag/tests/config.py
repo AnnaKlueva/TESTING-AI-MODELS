@@ -57,6 +57,7 @@ EMBED_MODEL_ID = "intfloat/multilingual-e5-base"
 
 RAGAS_RESULTS_JSON = ROOT / "outputs" / "rag_evaluation_results.json"
 RAGAS_METRICS_LOG = ROOT / "outputs" / "ragas_metrics.log"
+RETRIEVAL_METRICS_LOG = ROOT / "outputs" / "retrieval_metrics.log"
 
 # ── Пороги: retrieval ───────────────────────────────────────────────────
 

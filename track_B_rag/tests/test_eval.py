@@ -14,9 +14,11 @@ LLM-суддя:   tests/judge_config.py (завантаження моделі, 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from collections import defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -31,7 +33,10 @@ from config import (
     PASS_RATE_THRESHOLD,
     RAGAS_METRICS_LOG,
     RAGAS_RESULTS_JSON,
+    RETRIEVAL_METRICS_LOG,
 )
+
+logger = logging.getLogger(__name__)
 from generations_loader import load_generations
 from judge_config import (
     JudgeSetupError,
@@ -164,6 +169,35 @@ def _write_ragas_metrics_log(lines: list[str]) -> None:
     RAGAS_METRICS_LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _log_retrieval_metric(
+    metric: str,
+    value: float,
+    *,
+    k: int | None = None,
+    threshold: float,
+    extra: str = "",
+) -> None:
+    """Логує значення метрики завжди (pass/fail), у консоль і retrieval_metrics.log."""
+    k_part = f" (k={k})" if k is not None else ""
+    suffix = f", {extra.lstrip(', ')}" if extra else ""
+    msg = f"mean {metric}={value:.3f}{k_part}, threshold={threshold}{suffix}"
+    logger.info(msg)
+    RETRIEVAL_METRICS_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with RETRIEVAL_METRICS_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(msg + "\n")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _retrieval_metrics_log_header() -> None:
+    """Скидає retrieval_metrics.log на початку сесії pytest."""
+    RETRIEVAL_METRICS_LOG.parent.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    RETRIEVAL_METRICS_LOG.write_text(
+        f"=== Retrieval metrics ({ts}) ===\n",
+        encoding="utf-8",
+    )
+
+
 # ────────────────────── RETRIEVAL tests ─────────────────────────────────
 
 @pytest.mark.smoke
@@ -182,6 +216,13 @@ def test_retrieval_hit_pass_rate():
 
     rates = pass_rate_by_case(records, hit)
     failed = {cid: rate for cid, rate in rates.items() if rate < PASS_RATE_THRESHOLD}
+    mean_hit = sum(rates.values()) / len(rates) if rates else 0.0
+    _log_retrieval_metric(
+        "Hit pass-rate",
+        mean_hit,
+        threshold=PASS_RATE_THRESHOLD,
+        extra=f"cases={len(rates)}, failed_cases={failed or 'none'}",
+    )
     assert not failed, (
         f"Hit pass-rate < {PASS_RATE_THRESHOLD} для кейсів: {failed}"
     )
@@ -206,7 +247,7 @@ def test_retrieval_mrr():
 
     k = max(len(ranked_sources[0]) if ranked_sources else 0, 1)
     mean_mrr = aggregate(reciprocal_rank, ranked_sources, gold_ids_list)
-    print(f"\nMean MRR (k={k}): {mean_mrr:.3f}, threshold={PASS_RATE_THRESHOLD}")
+    _log_retrieval_metric("MRR", mean_mrr, k=k, threshold=PASS_RATE_THRESHOLD)
     assert mean_mrr >= PASS_RATE_THRESHOLD, f"mean MRR={mean_mrr:.3f}"
 
 
@@ -229,7 +270,7 @@ def test_retrieval_recall():
 
     k = max(len(ranked_sources[0]) if ranked_sources else 0, 1)
     mean_recall = aggregate(recall_at_k, ranked_sources, gold_ids_list, k=k)
-    print(f"\nMean Recall@K (k={k}): {mean_recall:.3f}, threshold={PASS_RATE_THRESHOLD}")
+    _log_retrieval_metric("Recall@K", mean_recall, k=k, threshold=PASS_RATE_THRESHOLD)
     assert mean_recall >= PASS_RATE_THRESHOLD, f"mean Recall@K={mean_recall:.3f}"
 
 
@@ -252,7 +293,7 @@ def test_retrieval_ndcg():
 
     k = max(len(ranked_sources[0]) if ranked_sources else 0, 1)
     mean_ndcg = aggregate(ndcg_at_k, ranked_sources, gold_ids_list, k=k)
-    print(f"\nMean NDCG@K (k={k}): {mean_ndcg:.3f}, threshold={PASS_RATE_THRESHOLD}")
+    _log_retrieval_metric("NDCG@K", mean_ndcg, k=k, threshold=PASS_RATE_THRESHOLD)
     assert mean_ndcg >= PASS_RATE_THRESHOLD, f"mean NDCG@K={mean_ndcg:.3f}"
 
 
@@ -275,7 +316,9 @@ def test_retrieval_precision():
 
     k = max(len(ranked_sources[0]) if ranked_sources else 0, 1)
     mean_precision = aggregate(precision_at_k, ranked_sources, gold_ids_list, k=k)
-    print(f"\nMean Precision@K (k={k}): {mean_precision:.3f}, threshold={PASS_RATE_THRESHOLD}")
+    _log_retrieval_metric(
+        "Precision@K", mean_precision, k=k, threshold=PASS_RATE_THRESHOLD
+    )
     assert mean_precision >= PASS_RATE_THRESHOLD, f"mean Precision@K={mean_precision:.3f}"
 
 
