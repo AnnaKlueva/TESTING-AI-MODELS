@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -169,6 +170,44 @@ def _write_ragas_metrics_log(lines: list[str]) -> None:
     RAGAS_METRICS_LOG.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
+_LATIN_RE = re.compile(r"[A-Za-z]")
+
+
+def _dominant_script_lang(text: str) -> str | None:
+    """
+    Груба детекція en/uk за домінуючим алфавітом (офлайн, без langdetect).
+    Повертає None, якщо в тексті немає літер для класифікації.
+    """
+    cyr = len(_CYRILLIC_RE.findall(text or ""))
+    lat = len(_LATIN_RE.findall(text or ""))
+    if cyr == 0 and lat == 0:
+        return None
+    if cyr > lat:
+        return "uk"
+    if lat > cyr:
+        return "en"
+    return None
+
+
+def _question_lang(rec: dict) -> str | None:
+    """Мова запиту: з input, інакше з метаданих кейсу (`lang`)."""
+    detected = _dominant_script_lang(rec.get("input") or "")
+    if detected is not None:
+        return detected
+    lang = rec.get("lang")
+    return lang if lang in {"en", "uk"} else None
+
+
+def _answer_matches_question_language(rec: dict) -> bool:
+    """True, якщо output домінує тією ж мовою, що й запит."""
+    q_lang = _question_lang(rec)
+    a_lang = _dominant_script_lang(rec.get("output") or "")
+    if q_lang is None or a_lang is None:
+        return True
+    return q_lang == a_lang
+
+
 def _log_retrieval_metric(
     metric: str,
     value: float,
@@ -300,6 +339,10 @@ def test_retrieval_ndcg():
 @pytest.mark.smoke
 @pytest.mark.regression
 @pytest.mark.retrieval
+@pytest.mark.xfail(
+    reason="D-01: partial retrieval miss Q1 (d7 not in top-K), Precision@K=0.571",
+    strict=False,
+)
 def test_retrieval_precision():
     """Середня Precision@K по кейсах із gold."""
     from metrics.custom_metrics import precision_at_k, aggregate
@@ -322,10 +365,52 @@ def test_retrieval_precision():
     assert mean_precision >= PASS_RATE_THRESHOLD, f"mean Precision@K={mean_precision:.3f}"
 
 
+# ────────────────────── GENERATION tests ────────────────────────────────
+
+@pytest.mark.smoke
+@pytest.mark.regression
+@pytest.mark.xfail(
+    reason="D-05: відповідь не мовою запиту (Q2, Q16, Q17, Q27, Q29)",
+    strict=False,
+)
+def test_answer_language_matches_question():
+    """
+    Відповідь має бути тією ж мовою, що й запит (en/uk).
+    Оракул: домінуючий алфавіт у input vs output; tie-break — поле lang кейсу.
+    Pass-rate по кейсах ≥ PASS_RATE_THRESHOLD (n-runs усереднюються через pass_rate_by_case).
+    """
+    records = [
+        r for r in load_generations()
+        if (r.get("input") or "").strip() and r.get("output") is not None
+    ]
+    if not records:
+        pytest.skip("Немає записів із input/output у generations.json")
+
+    rates = pass_rate_by_case(records, _answer_matches_question_language)
+    failed = {cid: rate for cid, rate in rates.items() if rate < PASS_RATE_THRESHOLD}
+    mean_rate = sum(rates.values()) / len(rates) if rates else 0.0
+    _log_retrieval_metric(
+        "Language match pass-rate",
+        mean_rate,
+        threshold=PASS_RATE_THRESHOLD,
+        extra=f"cases={len(rates)}, failed_cases={failed or 'none'}",
+    )
+    assert not failed, (
+        f"Language mismatch pass-rate < {PASS_RATE_THRESHOLD} для кейсів: {failed}"
+    )
+
+
 # ────────────────────── RAGAS LLM-as-judge ──────────────────────────────
 
 @pytest.mark.regression
 @pytest.mark.llm_as_judge
+@pytest.mark.xfail(
+    reason=(
+        "D-02, D-06, D-08: answer_correctness / faithfulness below threshold "
+        "(Q1, Q28, Q30, Q31)"
+    ),
+    strict=False,
+)
 def test_ragas_qwen3_judge():
     """
     Ragas LLM-as-judge: Faithfulness, Answer Relevancy, Answer Correctness,

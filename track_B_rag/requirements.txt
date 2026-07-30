@@ -17,6 +17,7 @@ bitsandbytes>=0.43   # опційно: вмикає 4-bit генерацію н�
 ragas>=0.2.10,<0.3
 rapidfuzz            # потрібно non-LLM метрикам Ragas; без нього тест skip-ається
 pandas>=2.0
+matplotlib>=3.8
 
 opentelemetry-api>=1.39,<1.43
 opentelemetry-sdk>=1.39,<1.43
