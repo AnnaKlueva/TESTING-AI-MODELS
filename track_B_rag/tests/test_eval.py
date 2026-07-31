@@ -450,7 +450,7 @@ def test_ragas_qwen3_judge():
             metrics=metrics,
             llm=ragas_llm,
             embeddings=ragas_embeddings,
-            raise_exceptions=False,
+            raise_exceptions=True,
             run_config=run_config,
         )
     except TypeError:
