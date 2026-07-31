@@ -7,14 +7,14 @@
 
 GPU-профіль (env var GPU_PROFILE)
 ──────────────────────────────────
-Визначає, як завантажується Qwen3-8B LLM-суддя і скільки Ragas-воркерів працюють.
+Визначає LLM-суддю Ragas і скільки воркерів працюють паралельно.
 
-  ┌──────────┬───────────┬──────────────────┬─────────────┐
-  │ Профіль  │ dtype     │ квантизація      │ max_workers │
-  ├──────────┼───────────┼──────────────────┼─────────────┤
-  │ 1xT4     │ 4-bit bnb │ load_in_4bit=True│ 1           │
-  │ 2xT4     │ float16   │ —                │ 2           │
-  └──────────┴───────────┴──────────────────┴─────────────┘
+  ┌──────────┬────────────────────────────────────┬───────────┬──────────────────┬─────────────┐
+  │ Профіль  │ модель                             │ dtype     │ квантизація      │ max_workers │
+  ├──────────┼────────────────────────────────────┼───────────┼──────────────────┼─────────────┤
+  │ 1xT4     │ Qwen/Qwen3-8B                      │ 4-bit bnb │ load_in_4bit=True│ 1           │
+  │ 2xT4     │ Qwen/Qwen3-30B-A3B-Instruct-2507   │ 4-bit bnb │ load_in_4bit=True│ 2           │
+  └──────────┴────────────────────────────────────┴───────────┴──────────────────┴─────────────┘
 
 Використання:
 
@@ -36,8 +36,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 # ── GPU-профіль ─────────────────────────────────────────────────────────
-#   GPU_PROFILE=1xT4  — одна T4 (16 GB), 4-bit квантизація, 1 воркер     (default)
-#   GPU_PROFILE=2xT4  — дві T4 (2×16 GB), fp16 через обидві GPU, >1 воркер
+#   GPU_PROFILE=1xT4  — одна T4 (16 GB), Qwen3-8B 4-bit, 1 воркер        (default)
+#   GPU_PROFILE=2xT4  — дві T4 (2×16 GB), Qwen3-30B-Instruct 4-bit, 2 воркери
 
 GPU_PROFILE: str = os.environ.get("GPU_PROFILE", "1xT4").strip()
 
@@ -50,7 +50,11 @@ if GPU_PROFILE not in _VALID_GPU_PROFILES:
 
 # ── Моделі ──────────────────────────────────────────────────────────────
 
-JUDGE_MODEL_ID = "Qwen/Qwen3-8B"
+JUDGE_MODEL_IDS: dict[str, str] = {
+    "1xT4": "Qwen/Qwen3-8B",
+    "2xT4": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+}
+JUDGE_MODEL_ID = JUDGE_MODEL_IDS[GPU_PROFILE]
 EMBED_MODEL_ID = "intfloat/multilingual-e5-base"
 
 # ── Шляхи до артефактів ─────────────────────────────────────────────────

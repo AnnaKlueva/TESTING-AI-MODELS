@@ -2,7 +2,7 @@
 Метричне оцінювання НАД збереженими генераціями.
 
 1) Retrieval-метрики — офлайн з gold_doc_ids (без моделі).
-2) Ragas LLM-as-judge — локальний Qwen3-8B (4-bit на GPU) над
+2) Ragas LLM-as-judge — локальний Qwen3 (8B / 30B-Instruct за GPU_PROFILE) над
    input / contexts / output / expected з outputs/generations.json
    (faithfulness, answer_relevancy, answer_correctness,
    context_precision, context_recall).
@@ -414,7 +414,7 @@ def test_answer_language_matches_question():
 def test_ragas_qwen3_judge():
     """
     Ragas LLM-as-judge: Faithfulness, Answer Relevancy, Answer Correctness,
-    Context Precision, Context Recall з локальним Qwen3-8B.
+    Context Precision, Context Recall з локальним Qwen3-суддею (див. config.JUDGE_MODEL_ID).
     Зберігає per-example метрики у outputs/rag_evaluation_results.json
     і summary (mean + n_scored/n_total) у outputs/ragas_metrics.log.
     Assert: mean кожної метрики ≥ порогу.
@@ -439,8 +439,8 @@ def test_ragas_qwen3_judge():
     except JudgeSetupError as ex:
         pytest.skip(str(ex))
 
-    # 1xT4: один воркер (16 GB, 4-bit, послідовна інференція).
-    # 2xT4: fp16 через обидві GPU — більше VRAM, можна 2 воркери паралельно.
+    # 1xT4: Qwen3-8B 4-bit, один воркер.
+    # 2xT4: Qwen3-30B-Instruct 4-bit через обидві GPU, 2 воркери паралельно.
     _max_workers = 2 if GPU_PROFILE == "2xT4" else 1
     run_config = RunConfig(timeout=600, max_workers=_max_workers, max_retries=3)
 

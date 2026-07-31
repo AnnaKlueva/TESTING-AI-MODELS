@@ -1,7 +1,8 @@
 """
 Конфігурація LLM-судді для Ragas.
 
-Завантаження локального Qwen3-8B (4-bit GPU / fp16 MPS / fp32 CPU),
+Завантаження локального LLM-судді (Qwen3-8B або Qwen3-30B-Instruct залежно від GPU_PROFILE;
+4-bit GPU / fp16 MPS / fp32 CPU),
 обгортки для Ragas LangchainLLMWrapper та ембедингів.
 
 Модуль не залежить від pytest — піднімає стандартні винятки.
@@ -51,10 +52,11 @@ class Qwen3NoThinkPipeline:
 
 def load_qwen3_judge() -> Qwen3NoThinkPipeline:
     """
-    Локальний Qwen3-8B для Ragas.
+    Локальний Qwen3 LLM-суддя для Ragas (модель з config.JUDGE_MODEL_ID).
 
-    4-bit через BitsAndBytesConfig (Colab GPU); без bnb — MPS/CPU fp16/bf16.
-    Потрібен transformers>=4.51 (підтримка model_type=qwen3).
+    1xT4: Qwen3-8B; 2xT4: Qwen3-30B-A3B-Instruct-2507.
+    4-bit через BitsAndBytesConfig на CUDA; без bnb — MPS/CPU fp16/bf16.
+    Потрібен transformers>=4.51 (підтримка model_type=qwen3 / qwen3_moe).
     max_new_tokens=1024, enable_thinking=False.
 
     Raises:
@@ -83,24 +85,22 @@ def load_qwen3_judge() -> Qwen3NoThinkPipeline:
                 f"GPU_PROFILE=2xT4, але torch бачить {n_gpus} GPU. "
                 f"Перевір CUDA_VISIBLE_DEVICES або середовище."
             )
-        model_kwargs["torch_dtype"] = torch.float16
-        model_kwargs["device_map"] = "auto"
-    else:
-        try:
-            import bitsandbytes  # noqa: F401
-            from transformers import BitsAndBytesConfig
 
-            if torch.cuda.is_available():
-                model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
-            else:
-                raise RuntimeError("bitsandbytes 4-bit потребує CUDA")
-        except Exception:
-            if torch.backends.mps.is_available():
-                model_kwargs["torch_dtype"] = torch.float16
-            elif torch.cuda.is_available():
-                model_kwargs["torch_dtype"] = torch.bfloat16
-            else:
-                model_kwargs["torch_dtype"] = torch.float32
+    try:
+        import bitsandbytes  # noqa: F401
+        from transformers import BitsAndBytesConfig
+
+        if torch.cuda.is_available():
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
+        else:
+            raise RuntimeError("bitsandbytes 4-bit потребує CUDA")
+    except Exception:
+        if torch.backends.mps.is_available():
+            model_kwargs["torch_dtype"] = torch.float16
+        elif torch.cuda.is_available():
+            model_kwargs["torch_dtype"] = torch.bfloat16
+        else:
+            model_kwargs["torch_dtype"] = torch.float32
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(JUDGE_MODEL_ID, trust_remote_code=True)
@@ -113,8 +113,8 @@ def load_qwen3_judge() -> Qwen3NoThinkPipeline:
     _dtype = getattr(model, "dtype", "?")
     _dev = getattr(model, "device", next(model.parameters()).device)
     print(
-        f"[judge_config] GPU_PROFILE={GPU_PROFILE}  model.dtype={_dtype}  "
-        f"device={_dev}  cuda_count={torch.cuda.device_count()}"
+        f"[judge_config] GPU_PROFILE={GPU_PROFILE}  model={JUDGE_MODEL_ID}  "
+        f"model.dtype={_dtype}  device={_dev}  cuda_count={torch.cuda.device_count()}"
     )
 
     _orig_apply = tokenizer.apply_chat_template
