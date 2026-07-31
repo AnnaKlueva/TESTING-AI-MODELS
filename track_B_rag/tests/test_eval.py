@@ -2,7 +2,7 @@
 Метричне оцінювання НАД збереженими генераціями.
 
 1) Retrieval-метрики — офлайн з gold_doc_ids (без моделі).
-2) Ragas LLM-as-judge — локальний Qwen3 (8B / 30B-Instruct за GPU_PROFILE) над
+2) Ragas LLM-as-judge — локальний Qwen3 (8B / 14B за GPU_PROFILE) над
    input / contexts / output / expected з outputs/generations.json
    (faithfulness, answer_relevancy, answer_correctness,
    context_precision, context_recall).
@@ -440,7 +440,7 @@ def test_ragas_qwen3_judge():
         pytest.skip(str(ex))
 
     # 1xT4: Qwen3-8B 4-bit, один воркер.
-    # 2xT4: Qwen3-30B-Instruct 4-bit через обидві GPU, 2 воркери паралельно.
+    # 2xT4: Qwen3-14B 4-bit, 2 воркери паралельно.
     _max_workers = 2 if GPU_PROFILE == "2xT4" else 1
     run_config = RunConfig(timeout=600, max_workers=_max_workers, max_retries=3)
 

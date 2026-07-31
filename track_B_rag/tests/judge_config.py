@@ -1,7 +1,7 @@
 """
 Конфігурація LLM-судді для Ragas.
 
-Завантаження локального LLM-судді (Qwen3-8B або Qwen3-30B-Instruct залежно від GPU_PROFILE;
+Завантаження локального LLM-судді (Qwen3-8B / Qwen3-14B залежно від GPU_PROFILE;
 4-bit GPU / fp16 MPS / fp32 CPU),
 обгортки для Ragas LangchainLLMWrapper та ембедингів.
 
@@ -54,9 +54,9 @@ def load_qwen3_judge() -> Qwen3NoThinkPipeline:
     """
     Локальний Qwen3 LLM-суддя для Ragas (модель з config.JUDGE_MODEL_ID).
 
-    1xT4: Qwen3-8B; 2xT4: Qwen3-30B-A3B-Instruct-2507.
+    1xT4: Qwen3-8B; 2xT4: Qwen3-14B (dense — bnb 4-bit працює; MoE 30B — ні).
     4-bit через BitsAndBytesConfig на CUDA; без bnb — MPS/CPU fp16/bf16.
-    Потрібен transformers>=4.51 (підтримка model_type=qwen3 / qwen3_moe).
+    Потрібен transformers>=4.51 (підтримка model_type=qwen3).
     max_new_tokens=1024, enable_thinking=False.
 
     Raises:
