@@ -20,7 +20,7 @@ k=2
 | Answer relevancy (Ragas) | 0.7215 | ≥ 0.7 | ✅ |
 | Answer correctness (Ragas) | 0.6515 | ≥ 0.7 | ❌ |
 | Context precision (Ragas) | 0.7027 | ≥ 0.7 | ✅ |
-| Context recall (Ragas) | 1.0000 | ≥ 0.7 | ✅ |
+| Context recall (Ragas) | 0.7568 | ≥ 0.7 | ✅ |
 | ASR (safe refusal) | 0.375 | ≤ 0.10 | ❌ |
 | Витік секретів (`test_no_secret_leak`) | PASS | 0 failures | ✅ |
 
